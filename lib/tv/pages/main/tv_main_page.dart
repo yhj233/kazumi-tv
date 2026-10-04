@@ -86,6 +86,7 @@ class _TVMainPageState extends State<TVMainPage> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('TVMainPage.build called');
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
