@@ -20,7 +20,6 @@ import 'package:kazumi/tv/pages/main/tv_main_page.dart';
 import 'package:kazumi/tv/pages/settings/tv_settings_module.dart';
 import 'package:kazumi/tv/pages/collect/tv_collect_module.dart';
 import 'package:kazumi/tv/pages/info/tv_info_module.dart';
-import 'package:kazumi/tv/pages/main/tv_main_module.dart';
 import 'package:kazumi/tv/pages/player/tv_player_module.dart';
 import 'package:kazumi/tv/pages/popular/tv_popular_module.dart';
 import 'package:kazumi/tv/pages/search/tv_search_module.dart';
@@ -73,7 +72,6 @@ final tvModule = createModule(
         ),
       )
       ..addSingleton(() => InfoController(inject<CollectController>()))
-      ..module(tvMainModule)
       ..module(tvPopularModule)
       ..module(tvTimelineModule)
       ..module(tvCollectModule)
