@@ -5,18 +5,18 @@ import 'package:flutter_modular/flutter_modular.dart';
 ///
 /// In flutter_modular 7.x, the global `Modular` getter no longer exists.
 /// This class provides a backward-compatible static interface that wraps
-/// the new `inject<T>()` function and stores a Navigator reference.
+/// the new `inject<T>()` function and stores a NavigatorState reference.
 class Modular {
-  static Navigator? _navigator;
+  static NavigatorState? _navigator;
 
   /// Set the navigator reference. Called from [TVApp] during build.
-  static void setNavigator(Navigator navigator) {
+  static void setNavigator(NavigatorState navigator) {
     _navigator = navigator;
   }
 
   /// Get a registered singleton service.
   static T get<T>() => inject<T>();
 
-  /// Get the navigator for navigation operations.
-  static Navigator get to => _navigator!;
+  /// Get the navigator state for navigation operations.
+  static NavigatorState get to => _navigator!;
 }
