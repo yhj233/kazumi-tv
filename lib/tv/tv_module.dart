@@ -44,6 +44,7 @@ final tvModule = createModule(
       ..addSingleton<IDanmakuShieldRepository>(DanmakuShieldRepository.new)
       ..addSingleton(PopularController.new)
       ..addSingleton(PluginsController.new)
+      ..addSingleton(() => HistoryController(inject<IHistoryRepository>()))
       ..addSingleton(
         () => VideoPageController(
           inject<HistoryController>(),
@@ -55,7 +56,6 @@ final tvModule = createModule(
           () => TimelineController(inject<ICollectRepository>()))
       ..addSingleton(
           () => CollectController(inject<ICollectCrudRepository>()))
-      ..addSingleton(() => HistoryController(inject<IHistoryRepository>()))
       ..addSingleton(
         () => MyController(
           inject<IHistoryRepository>(),
