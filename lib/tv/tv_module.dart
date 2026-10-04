@@ -16,6 +16,7 @@ import 'package:kazumi/repositories/history_repository.dart';
 import 'package:kazumi/repositories/search_history_repository.dart';
 import 'package:kazumi/services/shaders/shader_asset_service.dart';
 import 'package:kazumi/services/download/download_manager.dart';
+import 'package:kazumi/tv/pages/main/tv_main_page.dart';
 import 'package:kazumi/tv/pages/settings/tv_settings_module.dart';
 import 'package:kazumi/tv/pages/collect/tv_collect_module.dart';
 import 'package:kazumi/tv/pages/info/tv_info_module.dart';
@@ -29,6 +30,12 @@ import 'package:kazumi/tv/pages/timeline/tv_timeline_module.dart';
 final tvModule = createModule(
   register: (c) {
     c
+      // 根路由：应用启动时显示的页面
+      ..route(
+        '/',
+        child: (context, state) => const TVMainPage(),
+        transition: TransitionType.none,
+      )
       ..addSingleton<ICollectRepository>(CollectRepository.new)
       ..addSingleton<ISearchHistoryRepository>(SearchHistoryRepository.new)
       ..addSingleton<ICollectCrudRepository>(CollectCrudRepository.new)
