@@ -15,63 +15,64 @@ import 'package:kazumi/repositories/download_repository.dart';
 import 'package:kazumi/repositories/history_repository.dart';
 import 'package:kazumi/repositories/search_history_repository.dart';
 import 'package:kazumi/services/shaders/shader_asset_service.dart';
-import 'package:kazumi/tv/pages/settings/tv_settings_module.dart';
 import 'package:kazumi/services/download/download_manager.dart';
-import 'pages/collect/tv_collect_module.dart';
-import 'pages/info/tv_info_module.dart';
-import 'pages/main/tv_main_module.dart';
-import 'pages/player/tv_player_module.dart';
-import 'pages/popular/tv_popular_module.dart';
-import 'pages/search/tv_search_module.dart';
-import 'pages/timeline/tv_timeline_module.dart';
+import 'package:kazumi/tv/pages/settings/tv_settings_module.dart';
+import 'package:kazumi/tv/pages/collect/tv_collect_module.dart';
+import 'package:kazumi/tv/pages/info/tv_info_module.dart';
+import 'package:kazumi/tv/pages/main/tv_main_module.dart';
+import 'package:kazumi/tv/pages/player/tv_player_module.dart';
+import 'package:kazumi/tv/pages/popular/tv_popular_module.dart';
+import 'package:kazumi/tv/pages/search/tv_search_module.dart';
+import 'package:kazumi/tv/pages/timeline/tv_timeline_module.dart';
 
-class TVModule extends Module {
-  @override
-  void register(ModularContext c) {
-    c.addSingleton<ICollectRepository>(CollectRepository.new);
-    c.addSingleton<ISearchHistoryRepository>(SearchHistoryRepository.new);
-    c.addSingleton<ICollectCrudRepository>(CollectCrudRepository.new);
-    c.addSingleton<IHistoryRepository>(HistoryRepository.new);
-    c.addSingleton<IDownloadRepository>(DownloadRepository.new);
-    c.addSingleton<IDownloadManager>(DownloadManager.new);
-    c.addSingleton<IDanmakuShieldRepository>(DanmakuShieldRepository.new);
-
-    c.addSingleton(PopularController.new);
-    c.addSingleton(PluginsController.new);
-    c.addSingleton(
-      (i) => VideoPageController(
-        i.get<HistoryController>(),
-        i.get<IDownloadRepository>(),
-        i.get<IDownloadManager>(),
-      ),
-    );
-    c.addSingleton((i) => TimelineController(i.get<ICollectRepository>()));
-    c.addSingleton((i) => CollectController(i.get<ICollectCrudRepository>()));
-    c.addSingleton((i) => HistoryController(i.get<IHistoryRepository>()));
-    c.addSingleton(
-      (i) => MyController(
-        i.get<IHistoryRepository>(),
-        i.get<IDownloadRepository>(),
-        i.get<IDanmakuShieldRepository>(),
-      ),
-    );
-    c.addSingleton(ShaderAssetService.new);
-    c.addSingleton(
-      (i) => DownloadController(
-        i.get<IDownloadRepository>(),
-        i.get<IDownloadManager>(),
-        i.get<PluginsController>(),
-      ),
-    );
-    c.addSingleton((i) => InfoController(i.get<CollectController>()));
-
-    c.module("/", module: TVMainModule());
-    c.module("/popular", module: TVPopularModule());
-    c.module("/timeline", module: TVTimelineModule());
-    c.module("/collect", module: TVCollectModule());
-    c.module("/search", module: TVSearchModule());
-    c.module("/settings", module: TVSettingsModule());
-    c.module("/info", module: TVInfoModule());
-    c.module("/player", module: TVPlayerModule());
-  }
-}
+/// TV 模块：注册所有单例服务和路由。
+final tvModule = createModule(
+  register: (c) {
+    c
+      ..addSingleton<ICollectRepository>(CollectRepository.new)
+      ..addSingleton<ISearchHistoryRepository>(SearchHistoryRepository.new)
+      ..addSingleton<ICollectCrudRepository>(CollectCrudRepository.new)
+      ..addSingleton<IHistoryRepository>(HistoryRepository.new)
+      ..addSingleton<IDownloadRepository>(DownloadRepository.new)
+      ..addSingleton<IDownloadManager>(DownloadManager.new)
+      ..addSingleton<IDanmakuShieldRepository>(DanmakuShieldRepository.new)
+      ..addSingleton(PopularController.new)
+      ..addSingleton(PluginsController.new)
+      ..addSingleton(
+        () => VideoPageController(
+          inject<HistoryController>(),
+          inject<IDownloadRepository>(),
+          inject<IDownloadManager>(),
+        ),
+      )
+      ..addSingleton(
+          () => TimelineController(inject<ICollectRepository>()))
+      ..addSingleton(
+          () => CollectController(inject<ICollectCrudRepository>()))
+      ..addSingleton(() => HistoryController(inject<IHistoryRepository>()))
+      ..addSingleton(
+        () => MyController(
+          inject<IHistoryRepository>(),
+          inject<IDownloadRepository>(),
+          inject<IDanmakuShieldRepository>(),
+        ),
+      )
+      ..addSingleton(ShaderAssetService.new)
+      ..addSingleton(
+        () => DownloadController(
+          inject<IDownloadRepository>(),
+          inject<IDownloadManager>(),
+          inject<PluginsController>(),
+        ),
+      )
+      ..addSingleton(() => InfoController(inject<CollectController>()))
+      ..module(tvMainModule)
+      ..module(tvPopularModule)
+      ..module(tvTimelineModule)
+      ..module(tvCollectModule)
+      ..module(tvSearchModule)
+      ..module(tvSettingsModule)
+      ..module(tvInfoModule)
+      ..module(tvPlayerModule);
+  },
+);

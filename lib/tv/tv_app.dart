@@ -6,7 +6,7 @@ import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'core/utils/tv_constants.dart';
-import '../utils/modular_compat.dart';
+import 'utils/modular_compat.dart';
 
 /// TV 应用入口
 class TVApp extends StatefulWidget {
@@ -25,9 +25,9 @@ class _TVAppState extends State<TVApp> {
 
   @override
   Widget build(BuildContext context) {
-    // Set the modular context for the compat layer.
-    final modularContext = ModularContext.of(context);
-    Modular.setContext(modularContext);
+    // Set the navigator reference for the compat layer.
+    final navigator = Navigator.of(context);
+    Modular.setNavigator(navigator);
 
     return MaterialApp.router(
       title: 'Kazumi TV',
@@ -91,7 +91,7 @@ class _TVAppState extends State<TVApp> {
           titleMedium: TextStyle(
             fontSize: TVConstants.titleFontSize,
             fontWeight: FontWeight.w500,
-            color: TVConstants.textPrimaryColor,
+            color: TVConstants.textSecondaryColor,
           ),
           bodyLarge: TextStyle(
             fontSize: TVConstants.titleFontSize,
@@ -112,7 +112,7 @@ class _TVAppState extends State<TVApp> {
           ),
         ),
       ),
-      routerConfig: modularContext.routerConfig,
+      routerConfig: ModularApp.routerConfigOf(context),
     );
   }
 }

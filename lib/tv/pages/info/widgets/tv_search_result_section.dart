@@ -446,7 +446,7 @@ class _TVSearchResultSectionState extends State<TVSearchResultSection> {
         inputXpath: plugin.antiCrawlerConfig.captchaInput,
         buttonXpath: plugin.antiCrawlerConfig.captchaButton,
         pluginName: plugin.name,
-        onVerified: () {
+        onVerified: (pageHtml) {
           _captchaVerifyTimer?.cancel();
           _captchaVerifyTimer = null;
           verified = true;
@@ -579,7 +579,7 @@ class _TVSearchResultSectionState extends State<TVSearchResultSection> {
     final searchUrl = plugin.searchURL
         .replaceAll('@keyword', Uri.encodeQueryComponent(keyword));
 
-    void onVerified() {
+    void onVerified(String pageHtml) {
       if (autoVerified) return;
       autoVerified = true;
       Navigator.of(context).pop();

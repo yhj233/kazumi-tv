@@ -429,7 +429,7 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
                 createdController: (DanmakuController e) {
                   playerController.danmaku.canvasController = e;
                   WidgetsBinding.instance.addPostFrameCallback((_) {
-                    playerController.danmaku.updateDanmakuSpeed();
+                    playerController.updateDanmakuSpeed();
                   });
                 },
                 option: DanmakuOption(

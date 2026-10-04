@@ -14,6 +14,9 @@ import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/tv/tv_app.dart';
 import 'package:kazumi/tv/tv_module.dart';
 
+/// TV 导航器 GlobalKey
+final tvNavigatorKey = GlobalKey<NavigatorState>();
+
 /// Kazumi TV 入口：本仓库为 Android TV 专用分支，直接启动 TV 应用。
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,7 +29,7 @@ void main() async {
     await GStorage.init();
   } catch (e) {
     KazumiLogger().e('Kazumi TV: failed to init storage', error: e);
-    runApp(const MaterialApp(
+    runApp(MaterialApp(
       title: '初始化失败',
       builder: (context, child) => const TVApp(),
     ));
@@ -41,7 +44,8 @@ void main() async {
 
   runApp(
     ModularApp(
-      module: TVModule(),
+      module: tvModule,
+      navigatorKey: tvNavigatorKey,
       child: const TVApp(),
     ),
   );
