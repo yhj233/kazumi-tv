@@ -135,31 +135,11 @@ dependencies:
   macos_secure_bookmarks: ^0.2.1
 
 dependency_overrides:
-  media_kit_libs_linux:
-    git:
-      url: https://github.com/Predidit/media-kit.git
-      ref: 803c4a27912091db6f839d48d1b984a0d9f588c7
-      path: ./libs/linux/media_kit_libs_linux
-  media_kit_libs_ios_video:
-    git:
-      url: https://github.com/Predidit/media-kit.git
-      ref: 803c4a27912091db6f839d48d1b984a0d9f588c7
-      path: ./libs/ios/media_kit_libs_ios_video
   media_kit_libs_android_video:
     git:
       url: https://github.com/Predidit/media-kit.git
       ref: 803c4a27912091db6f839d48d1b984a0d9f588c7
       path: ./libs/android/media_kit_libs_android_video
-  media_kit_libs_windows_video:
-    git:
-      url: https://github.com/Predidit/media-kit.git
-      ref: 803c4a27912091db6f839d48d1b984a0d9f588c7
-      path: ./libs/windows/media_kit_libs_windows_video
-  media_kit_libs_macos_video:
-    git:
-      url: https://github.com/Predidit/media-kit.git
-      ref: 803c4a27912091db6f839d48d1b984a0d9f588c7
-      path: ./libs/macos/media_kit_libs_macos_video
 
 dev_dependencies:
   path_provider_platform_interface: ^2.1.2
