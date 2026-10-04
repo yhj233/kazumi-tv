@@ -57,10 +57,20 @@ jobs:
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk kazumi_tv_${env:tag}_x86_64.apk
         shell: bash
 
-      - name: Upload android outputs
+      - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@v4
         with:
-          name: android_outputs
-          path: kazumi_tv_*.apk
+          name: kazumi_tv_${{ env.tag }}_arm64-v8a
+          path: kazumi_tv_${{ env.tag }}_arm64-v8a.apk
+      - name: Upload armeabi-v7a APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kazumi_tv_${{ env.tag }}_armeabi-v7a
+          path: kazumi_tv_${{ env.tag }}_armeabi-v7a.apk
+      - name: Upload x86_64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kazumi_tv_${{ env.tag }}_x86_64
+          path: kazumi_tv_${{ env.tag }}_x86_64.apk
 
 
