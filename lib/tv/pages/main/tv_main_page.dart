@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:kazumi/tv/pages/search/tv_search_page.dart';
 import 'package:kazumi/tv/pages/settings/tv_settings_page.dart';
 import 'package:kazumi/tv/utils/modular_compat.dart';
-import 'package:kazumi/main.dart' show tvNavigatorKey;
 import '../../core/utils/tv_constants.dart';
 import '../../tv_app.dart';
 import 'tv_menu_widget.dart';
@@ -37,14 +36,19 @@ class _TVMainPageState extends State<TVMainPage> {
   @override
   void initState() {
     super.initState();
-    // 设置 Modular 导航器（TVApp 被绕过，需要手动设置）
-    final navState = tvNavigatorKey.currentState;
-    if (navState != null) {
-      Modular.setNavigator(navState);
-    }
     _initPages();
     // 初始化 TV 环境（屏幕方向、焦点策略等）
     initTVEnvironment();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 设置 Modular 导航器（使用 MaterialApp 的 Navigator）
+    final navState = Navigator.of(context);
+    if (navState != null) {
+      Modular.setNavigator(navState);
+    }
   }
 
   @override
