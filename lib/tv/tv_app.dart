@@ -115,7 +115,7 @@ class _TVAppState extends State<TVApp> {
           ),
         ),
       ),
-      home: const TVMainPage(),
+      home: TVMainPage(),
     );
   }
 }
