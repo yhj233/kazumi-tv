@@ -160,11 +160,6 @@ dependency_overrides:
       url: https://github.com/Predidit/media-kit.git
       ref: 803c4a27912091db6f839d48d1b984a0d9f588c7
       path: ./libs/macos/media_kit_libs_macos_video
-  media_kit_libs_ohos:
-    git:
-      url: https://github.com/Predidit/media-kit.git
-      ref: 803c4a27912091db6f839d48d1b984a0d9f588c7
-      path: ./libs/ohos/media_kit_libs_ohos
 
 dev_dependencies:
   path_provider_platform_interface: ^2.1.2
