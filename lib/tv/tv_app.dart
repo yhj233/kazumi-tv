@@ -29,7 +29,10 @@ class _TVAppState extends State<TVApp> {
     final navigator = Navigator.of(context);
     Modular.setNavigator(navigator);
 
-    return MaterialApp.router(
+    // Render the root route directly from the module tree.
+    // The ModularApp already provides a Navigator; we just need to
+    // display the widget for the root route '/' (TVMainPage).
+    return MaterialApp(
       title: 'Kazumi TV',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -112,7 +115,7 @@ class _TVAppState extends State<TVApp> {
           ),
         ),
       ),
-      routerConfig: ModularApp.routerConfigOf(context),
+      home: const TVMainPage(),
     );
   }
 }
