@@ -44,14 +44,7 @@ class _TVMainPageState extends State<TVMainPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // 设置 Modular 导航器（使用 MaterialApp 的 Navigator）
-    final navState = Navigator.of(context);
-    if (navState != null) {
-      debugPrint('TV: didChangeDependencies, setting Modular.setNavigator');
-      Modular.setNavigator(navState);
-    } else {
-      debugPrint('TV: didChangeDependencies, Navigator.of(context) is null');
-    }
+    // Modular.to 已在 main.dart 中通过 scheduleMicrotask 设置为 ModularApp 的 navigator
   }
 
   @override

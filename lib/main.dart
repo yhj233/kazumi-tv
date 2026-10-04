@@ -14,6 +14,7 @@ import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/tv/pages/main/tv_main_page.dart';
 import 'package:kazumi/tv/tv_module.dart';
 import 'package:kazumi/tv/core/utils/tv_constants.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 
 /// TV 导航器 GlobalKey
 final tvNavigatorKey = GlobalKey<NavigatorState>();
@@ -65,4 +66,16 @@ void main() async {
       home: TVMainPage(),
     ),
   ));
+
+  // ModularApp 的 navigator 才是用于路由导航的
+  // 在 ModularApp 构建完成后设置 Modular.to
+  scheduleMicrotask(() {
+    final navState = tvNavigatorKey.currentState;
+    if (navState != null) {
+      Modular.setNavigator(navState);
+      debugPrint('TV: main.dart set Modular.to to ModularApp navigator');
+    } else {
+      debugPrint('TV: main.dart tvNavigatorKey.currentState is null!');
+    }
+  });
 }
