@@ -4,7 +4,7 @@ import 'tv_timeline_page.dart';
 
 class TVTimelineModule extends Module {
   @override
-  void routes(r) {
-    r.child('/', child: (_) => const TVTimelinePage());
+  void register(ModularContext c) {
+    c.child('/', child: (_) => const TVTimelinePage());
   }
 }

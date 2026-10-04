@@ -3,7 +3,7 @@ import 'tv_main_page.dart';
 
 class TVMainModule extends Module {
   @override
-  void routes(r) {
-    r.child("/", child: (_) => const TVMainPage());
+  void register(ModularContext c) {
+    c.child("/", child: (_) => const TVMainPage());
   }
 }

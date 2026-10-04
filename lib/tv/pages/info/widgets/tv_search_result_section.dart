@@ -12,6 +12,7 @@ import 'package:kazumi/services/plugin/captcha_verification_service.dart';
 import 'package:kazumi/services/plugin/plugin_search_service.dart';
 import 'package:kazumi/modules/search/plugin_search_module.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 import '../../../core/widgets/tv_button.dart';
 import '../../../core/focus/tv_list_items.dart';
 import 'tv_search_result_card.dart';
@@ -174,7 +175,7 @@ class _TVSearchResultSectionState extends State<TVSearchResultSection> {
   Widget _buildPluginSection(Plugin plugin) {
     return Observer(
       builder: (context) {
-        final status = widget.infoController.pluginSearchStatus[plugin.name];
+        final status = widget.infoController.pluginSearchStatus[plugin.name]?.name;
 
         return Container(
           margin: const EdgeInsets.only(bottom: 16),

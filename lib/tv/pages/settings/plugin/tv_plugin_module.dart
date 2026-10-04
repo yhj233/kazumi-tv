@@ -4,8 +4,8 @@ import 'package:kazumi/tv/pages/settings/plugin/tv_plugin_shop_page.dart';
 
 class TVPluginModule extends Module {
   @override
-  void routes(r) {
-    r.child("/", child: (_) => const TVPluginListPage());
-    r.child("/shop", child: (_) => const TVPluginShopPage());
+  void register(ModularContext c) {
+    c.child("/", child: (_) => const TVPluginListPage());
+    c.child("/shop", child: (_) => const TVPluginShopPage());
   }
 }

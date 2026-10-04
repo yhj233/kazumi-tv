@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_modular/flutter_modular.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';
 import 'package:kazumi/tv/widgets/tv_bangumi_card.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 
 /// TV搜索结果网格组件
 class TVSearchResults extends StatefulWidget {

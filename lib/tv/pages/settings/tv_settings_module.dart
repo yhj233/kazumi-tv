@@ -4,8 +4,8 @@ import 'package:kazumi/tv/pages/settings/plugin/tv_plugin_module.dart';
 
 class TVSettingsModule extends Module {
   @override
-  void routes(r) {
-    r.child('/', child: (_) => const TVSettingsPage());
-    r.module('/plugin', module: TVPluginModule());
+  void register(ModularContext c) {
+    c.child('/', child: (_) => const TVSettingsPage());
+    c.module('/plugin', module: TVPluginModule());
   }
 }

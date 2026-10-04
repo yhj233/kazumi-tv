@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_modular/flutter_modular.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 import '../../../core/widgets/tv_button.dart';
 import 'tv_collect_dialog.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';

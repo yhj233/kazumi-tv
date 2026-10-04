@@ -4,6 +4,7 @@ import 'package:kazumi/pages/my/my_controller.dart';
 import 'package:kazumi/tv/pages/settings/widgets/tv_app_info_card.dart';
 import 'package:kazumi/tv/core/widgets/tv_button.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 
 class TVAboutPage extends StatefulWidget {
   final FocusNode? firstItemFocusNode;

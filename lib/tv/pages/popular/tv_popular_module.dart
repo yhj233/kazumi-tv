@@ -3,7 +3,7 @@ import 'tv_popular_page.dart';
 
 class TVPopularModule extends Module {
   @override
-  void routes(r) {
-    r.child('/', child: (_) => const TVPopularPage());
+  void register(ModularContext c) {
+    c.child('/', child: (_) => const TVPopularPage());
   }
 }

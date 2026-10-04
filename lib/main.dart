@@ -18,7 +18,7 @@ import 'package:kazumi/tv/tv_module.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   registerEchHttpLicenses();
-  await MediaKit.ensureInitialized();
+  MediaKit.ensureInitialized();
 
   try {
     final hivePath = '${(await getApplicationSupportDirectory()).path}/hive';

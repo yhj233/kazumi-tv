@@ -14,6 +14,7 @@ import 'package:kazumi/modules/bangumi/bangumi_item.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/tv/core/focus/tv_key_handler.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 
 class TVInfoPage extends StatefulWidget {
   final BangumiItem bangumiItem;

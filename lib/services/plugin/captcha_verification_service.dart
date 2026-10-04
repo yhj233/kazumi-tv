@@ -266,6 +266,14 @@ class CaptchaVerificationService {
     return '';
   }
 
+  /// 保存 Cookie 并卸载页面（用于指定插件）
+  Future<void> saveAndUnload(String pluginName) async {
+    final controller = _controller;
+    if (controller == null) return;
+    await _finalize.run(() =>
+        _saveCookiesAndUnload(controller, pluginName));
+  }
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;

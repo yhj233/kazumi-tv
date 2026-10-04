@@ -133,6 +133,48 @@ class KazumiDialog {
     }
   }
 
+  /// 显示加载对话框
+  static Future<KazumiDialogHandle<void>?> showLoading({
+    BuildContext? context,
+    required String msg,
+    bool barrierDismissible = false,
+    FutureOr<void> Function()? onDismiss,
+  }) async {
+    final handle = KazumiDialogHandle<void>();
+    await show<void>(
+      context: context,
+      handle: handle,
+      clickMaskDismiss: barrierDismissible,
+      onDismiss: onDismiss,
+      builder: (ctx) => _LoadingDialog(msg: msg),
+    );
+    return handle;
+  }
+
+  /// 显示定时成功对话框
+  static Future<KazumiDialogHandle<void>?> showTimedSuccessDialog({
+    BuildContext? context,
+    required String title,
+    required String message,
+    FutureOr<void> Function()? onComplete,
+    Duration duration = const Duration(seconds: 3),
+  }) async {
+    final handle = KazumiDialogHandle<void>();
+    await show<void>(
+      context: context,
+      handle: handle,
+      clickMaskDismiss: true,
+      onDismiss: () {
+        if (onComplete != null) {
+          scheduleMicrotask(onComplete);
+        }
+      },
+      transitionDuration: duration,
+      builder: (ctx) => _SuccessDialog(title: title, message: message),
+    );
+    return handle;
+  }
+
   static void dismiss<T>({BuildContext? context, T? popWith}) {
     if (context != null && !context.mounted) return;
     final route =
@@ -262,5 +304,84 @@ class KazumiDialogObserver extends NavigatorObserver {
         rootScaffoldMessengerKey.currentState?.removeCurrentSnackBar();
       }
     });
+  }
+}
+
+/// 加载对话框
+class _LoadingDialog extends StatelessWidget {
+  final String msg;
+
+  const _LoadingDialog({required this.msg});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Theme.of(context).dialogTheme.backgroundColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 16),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            Text(
+              msg,
+              style: Theme.of(context).dialogTheme.titleTextStyle ??
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 成功对话框
+class _SuccessDialog extends StatelessWidget {
+  final String title;
+  final String message;
+
+  const _SuccessDialog({required this.title, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Theme.of(context).dialogTheme.backgroundColor,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.check_circle,
+              color: Colors.green,
+              size: 48,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: Theme.of(context).dialogTheme.titleTextStyle ??
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: Theme.of(context).textTheme?.bodyMedium ??
+                  const TextStyle(fontSize: 14),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -8,6 +8,7 @@ import 'package:kazumi/tv/core/focus/tv_focus_scope.dart';
 import 'package:kazumi/tv/core/focus/tv_focus_scope_manager.dart';
 import 'package:kazumi/tv/core/focus/tv_list_items.dart';
 import 'package:kazumi/tv/core/focus/focus_pattern.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 import 'package:kazumi/tv/core/utils/tv_constants.dart';
 import 'package:kazumi/tv/core/widgets/tv_card_visual.dart';
 import 'package:kazumi/tv/widgets/tv_bangumi_card.dart';

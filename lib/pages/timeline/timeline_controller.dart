@@ -169,4 +169,14 @@ abstract class _TimelineController with Store {
       setOnlyShowWatchingBangumis(false),
     ]);
   }
+
+  /// 初始化（加载当前赛季）
+  Future<void> init() async {
+    await loadSeason(DateTime.now());
+  }
+
+  /// 获取当前排播表
+  List<List<BangumiItem>> getSchedules() {
+    return filterCalendar(loadWatchingBangumiIds());
+  }
 }

@@ -4,6 +4,7 @@ import 'package:flutter_modular/flutter_modular.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';
 import 'package:kazumi/pages/timeline/timeline_controller.dart';
 import 'package:kazumi/tv/core/focus/tv_focus_scope_manager.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 
 import '../../core/focus/focus_pattern.dart';
 import '../../core/focus/tv_focus_scope.dart';

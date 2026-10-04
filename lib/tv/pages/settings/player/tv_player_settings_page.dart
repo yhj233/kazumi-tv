@@ -7,6 +7,14 @@ import 'package:kazumi/tv/pages/settings/widgets/tv_settings_toggle_row.dart';
 import 'package:kazumi/tv/pages/settings/widgets/tv_settings_slider_row.dart';
 import 'package:kazumi/tv/pages/settings/widgets/tv_settings_dropdown_row.dart';
 
+/// 画面比例类型映射
+const Map<int, String> aspectRatioTypeMap = {
+  0: '自动',
+  1: '16:9',
+  2: '4:3',
+  3: '1:1',
+};
+
 class TVPlayerSettingsPage extends StatefulWidget {
   final FocusNode? firstItemFocusNode;
   final VoidCallback? onExitUp;

@@ -3,7 +3,7 @@ import 'tv_search_page.dart';
 
 class TVSearchModule extends Module {
   @override
-  void routes(r) {
-    r.child('/', child: (_) => const TVSearchPage());
+  void register(ModularContext c) {
+    c.child('/', child: (_) => const TVSearchPage());
   }
 }

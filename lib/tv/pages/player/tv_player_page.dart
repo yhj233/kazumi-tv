@@ -13,6 +13,7 @@ import 'package:kazumi/pages/player/player_controller.dart';
 import 'package:kazumi/pages/video/video_controller.dart';
 import 'package:kazumi/pages/player/player_item_surface.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 import 'package:kazumi/tv/core/focus/tv_key_handler.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
 import 'package:mobx/mobx.dart';
@@ -416,7 +417,7 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
         child: Stack(
           children: [
             Center(
-              child: PlayerItemSurface(),
+              child: PlayerItemSurface(playerController: playerController),
             ),
             Positioned(
               top: 0,

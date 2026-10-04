@@ -7,6 +7,7 @@ import 'package:kazumi/modules/plugin/plugin_http_module.dart';
 import 'package:kazumi/tv/core/focus/tv_list_items.dart';
 import 'package:kazumi/tv/core/utils/tv_constants.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 
 class TVPluginShopPage extends StatefulWidget {
   final FocusNode? sidebarFocusNode;

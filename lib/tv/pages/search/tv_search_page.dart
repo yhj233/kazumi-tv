@@ -10,6 +10,7 @@ import 'package:kazumi/tv/core/focus/focus_pattern.dart';
 import 'package:kazumi/tv/pages/search/widgets/tv_search_keyboard.dart';
 import 'package:kazumi/tv/pages/search/widgets/tv_search_history.dart';
 import 'package:kazumi/tv/pages/search/widgets/tv_search_results.dart';
+import 'package:kazumi/tv/utils/modular_compat.dart';
 
 class TVSearchPage extends StatefulWidget {
   const TVSearchPage({

@@ -3,7 +3,7 @@ import 'tv_collect_page.dart';
 
 class TVCollectModule extends Module {
   @override
-  void routes(r) {
-    r.child('/', child: (_) => const TVCollectPage());
+  void register(ModularContext c) {
+    c.child('/', child: (_) => const TVCollectPage());
   }
 }

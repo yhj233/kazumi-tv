@@ -27,54 +27,51 @@ import 'pages/timeline/tv_timeline_module.dart';
 
 class TVModule extends Module {
   @override
-  void binds(i) {
-    i.addSingleton<ICollectRepository>(CollectRepository.new);
-    i.addSingleton<ISearchHistoryRepository>(SearchHistoryRepository.new);
-    i.addSingleton<ICollectCrudRepository>(CollectCrudRepository.new);
-    i.addSingleton<IHistoryRepository>(HistoryRepository.new);
-    i.addSingleton<IDownloadRepository>(DownloadRepository.new);
-    i.addSingleton<IDownloadManager>(DownloadManager.new);
-    i.addSingleton<IDanmakuShieldRepository>(DanmakuShieldRepository.new);
+  void register(ModularContext c) {
+    c.addSingleton<ICollectRepository>(CollectRepository.new);
+    c.addSingleton<ISearchHistoryRepository>(SearchHistoryRepository.new);
+    c.addSingleton<ICollectCrudRepository>(CollectCrudRepository.new);
+    c.addSingleton<IHistoryRepository>(HistoryRepository.new);
+    c.addSingleton<IDownloadRepository>(DownloadRepository.new);
+    c.addSingleton<IDownloadManager>(DownloadManager.new);
+    c.addSingleton<IDanmakuShieldRepository>(DanmakuShieldRepository.new);
 
-    i.addSingleton(PopularController.new);
-    i.addSingleton(PluginsController.new);
-    i.addSingleton(
+    c.addSingleton(PopularController.new);
+    c.addSingleton(PluginsController.new);
+    c.addSingleton(
       (i) => VideoPageController(
         i.get<HistoryController>(),
         i.get<IDownloadRepository>(),
         i.get<IDownloadManager>(),
       ),
     );
-    i.addSingleton((i) => TimelineController(i.get<ICollectRepository>()));
-    i.addSingleton((i) => CollectController(i.get<ICollectCrudRepository>()));
-    i.addSingleton((i) => HistoryController(i.get<IHistoryRepository>()));
-    i.addSingleton(
+    c.addSingleton((i) => TimelineController(i.get<ICollectRepository>()));
+    c.addSingleton((i) => CollectController(i.get<ICollectCrudRepository>()));
+    c.addSingleton((i) => HistoryController(i.get<IHistoryRepository>()));
+    c.addSingleton(
       (i) => MyController(
         i.get<IHistoryRepository>(),
         i.get<IDownloadRepository>(),
         i.get<IDanmakuShieldRepository>(),
       ),
     );
-    i.addSingleton(ShaderAssetService.new);
-    i.addSingleton(
+    c.addSingleton(ShaderAssetService.new);
+    c.addSingleton(
       (i) => DownloadController(
         i.get<IDownloadRepository>(),
         i.get<IDownloadManager>(),
         i.get<PluginsController>(),
       ),
     );
-    i.addSingleton((i) => InfoController(i.get<CollectController>()));
-  }
+    c.addSingleton((i) => InfoController(i.get<CollectController>()));
 
-  @override
-  void routes(r) {
-    r.module("/", module: TVMainModule());
-    r.module("/popular", module: TVPopularModule());
-    r.module("/timeline", module: TVTimelineModule());
-    r.module("/collect", module: TVCollectModule());
-    r.module("/search", module: TVSearchModule());
-    r.module("/settings", module: TVSettingsModule());
-    r.module("/info", module: TVInfoModule());
-    r.module("/player", module: TVPlayerModule());
+    c.module("/", module: TVMainModule());
+    c.module("/popular", module: TVPopularModule());
+    c.module("/timeline", module: TVTimelineModule());
+    c.module("/collect", module: TVCollectModule());
+    c.module("/search", module: TVSearchModule());
+    c.module("/settings", module: TVSettingsModule());
+    c.module("/info", module: TVInfoModule());
+    c.module("/player", module: TVPlayerModule());
   }
 }
