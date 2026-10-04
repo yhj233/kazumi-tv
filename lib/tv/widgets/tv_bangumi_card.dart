@@ -37,6 +37,7 @@ class TVBangumiCard extends StatelessWidget {
     if (isFocused != null) {
       debugPrint('TV: TVBangumiCard build, isFocused=$_isFocused, onSelect=${onSelect != null}');
       return GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () {
           debugPrint('TV: TVBangumiCard onTap called');
           onSelect?.call();

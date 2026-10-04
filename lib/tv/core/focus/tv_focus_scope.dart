@@ -92,6 +92,7 @@ class TvFocusScope extends StatelessWidget {
 
   /// 处理按键事件
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    debugPrint('TV: TvFocusScope._handleKeyEvent, event=${event.runtimeType}, key=${event is KeyDownEvent ? (event as KeyDownEvent).logicalKey : "N/A"}');
     final handler = enableKeyRepeat
         ? TvKeyHandler.handleNavigationWithRepeat
         : TvKeyHandler.handleNavigation;
@@ -191,10 +192,12 @@ class TvFocusScope extends StatelessWidget {
   KeyEventResult Function()? _getSelectHandler() {
     if (onSelect != null) {
       return () {
+        debugPrint('TV: TvFocusScope._getSelectHandler called, calling onSelect');
         onSelect!();
         return KeyEventResult.handled;
       };
     }
+    debugPrint('TV: TvFocusScope._getSelectHandler, onSelect is null');
     return null;
   }
 

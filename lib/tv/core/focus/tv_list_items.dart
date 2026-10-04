@@ -88,20 +88,27 @@ class TvHorizontalListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TvFocusScope(
-      pattern: FocusPattern.horizontal,
-      focusNode: focusNode,
-      autofocus: autofocus,
-      onFocusChange: onFocusChange,
-      onSelect: onSelect,
-      onExitUp: onMoveUp,
-      onExitDown: onMoveDown,
-      exitLeft: exitLeft,
-      exitRight: exitRight,
-      isFirst: isFirst,
-      isLast: isLast,
-      enableKeyRepeat: enableKeyRepeat,
-      child: child,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        focusNode?.requestFocus();
+        onSelect?.call();
+      },
+      child: TvFocusScope(
+        pattern: FocusPattern.horizontal,
+        focusNode: focusNode,
+        autofocus: autofocus,
+        onFocusChange: onFocusChange,
+        onSelect: onSelect,
+        onExitUp: onMoveUp,
+        onExitDown: onMoveDown,
+        exitLeft: exitLeft,
+        exitRight: exitRight,
+        isFirst: isFirst,
+        isLast: isLast,
+        enableKeyRepeat: enableKeyRepeat,
+        child: child,
+      ),
     );
   }
 }
