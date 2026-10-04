@@ -11,7 +11,7 @@ import 'package:kazumi/services/network/ech_http_licenses.dart';
 import 'package:kazumi/services/network/proxy_manager.dart';
 import 'package:kazumi/services/platform/webview_feature_service.dart';
 import 'package:kazumi/services/logging/logger.dart';
-import 'package:kazumi/tv/tv_app.dart';
+import 'package:kazumi/tv/pages/main/tv_main_page.dart';
 import 'package:kazumi/tv/tv_module.dart';
 
 /// TV 导航器 GlobalKey
@@ -42,11 +42,9 @@ void main() async {
   await MeteredNetworkService.refresh();
   ProxyManager.applyProxy();
 
-  runApp(
-    ModularApp(
-      module: tvModule,
-      navigatorKey: tvNavigatorKey,
-      child: const TVApp(),
-    ),
-  );
+  runApp(ModularApp(
+    module: tvModule,
+    navigatorKey: tvNavigatorKey,
+    child: TVMainPage(),
+  ));
 }
