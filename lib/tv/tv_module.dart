@@ -27,14 +27,13 @@ import 'package:kazumi/pages/info/info_controller.dart';
 
 /// TV 模块：注册所有单例服务和路由。
 ///
-/// `addSingleton` 是 lazy 的——工厂在 service 第一次被访问时调用，
-/// 而不是在 bootstrap 期间。所以 `inject<T>()` 在工厂内部是安全的，
-/// 因为此时 bootstrap 已完成。
+/// `flutter_modular` 会自动解析构造函数参数（constructor injection）。
+/// 当 singleton 工厂被调用时，库自动从 DI 容器解析依赖并传递给构造函数。
+/// 所以不需要在工厂里手动调用 `inject<T>()`。
 final tvModule = createModule(
   register: (c) {
     c
       // 根路由：应用启动时显示的页面
-      // child 工厂在 bootstrap 完成后调用，所以 inject<T>() 是安全的
       ..route(
         '/',
         child: (context, state) => TVMainPage(),
@@ -51,26 +50,14 @@ final tvModule = createModule(
       ..addSingleton(PopularController.new)
       ..addSingleton(PluginsController.new)
       ..addSingleton(ShaderAssetService.new)
-      // 需要依赖的 controller——工厂在第一次访问时调用，inject<T>() 是安全的
-      ..addSingleton<HistoryController>(() => HistoryController(inject<IHistoryRepository>()))
-      ..addSingleton<VideoPageController>(() => VideoPageController(
-          inject<HistoryController>(),
-          inject<IDownloadRepository>(),
-          inject<IDownloadManager>(),
-        ))
-      ..addSingleton<TimelineController>(() => TimelineController(inject<ICollectRepository>()))
-      ..addSingleton<CollectController>(() => CollectController(inject<ICollectCrudRepository>()))
-      ..addSingleton<MyController>(() => MyController(
-          inject<IHistoryRepository>(),
-          inject<IDownloadRepository>(),
-          inject<IDanmakuShieldRepository>(),
-        ))
-      ..addSingleton<DownloadController>(() => DownloadController(
-          inject<IDownloadRepository>(),
-          inject<IDownloadManager>(),
-          inject<PluginsController>(),
-        ))
-      ..addSingleton<InfoController>(() => InfoController(inject<CollectController>()))
+      // 需要依赖的 controller——库自动解析构造函数参数
+      ..addSingleton(HistoryController.new)
+      ..addSingleton(VideoPageController.new)
+      ..addSingleton(TimelineController.new)
+      ..addSingleton(CollectController.new)
+      ..addSingleton(MyController.new)
+      ..addSingleton(DownloadController.new)
+      ..addSingleton(InfoController.new)
       // 子模块
       ..module(tvPopularModule)
       ..module(tvTimelineModule)
