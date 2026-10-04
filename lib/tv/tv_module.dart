@@ -18,7 +18,7 @@ import 'package:kazumi/tv/pages/popular/tv_popular_module.dart';
 import 'package:kazumi/tv/pages/search/tv_search_module.dart';
 import 'package:kazumi/tv/pages/timeline/tv_timeline_module.dart';
 import 'package:kazumi/pages/history/history_controller.dart';
-import 'package:kazumi/pages/video/video_page_controller.dart';
+import 'package:kazumi/pages/video/video_controller.dart';
 import 'package:kazumi/pages/timeline/timeline_controller.dart';
 import 'package:kazumi/pages/collect/collect_controller.dart';
 import 'package:kazumi/pages/my/my_controller.dart';
