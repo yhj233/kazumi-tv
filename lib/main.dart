@@ -31,7 +31,7 @@ void main() async {
     KazumiLogger().e('Kazumi TV: failed to init storage', error: e);
     runApp(MaterialApp(
       title: '初始化失败',
-      builder: (context, child) => const TVApp(),
+      home: TVMainPage(),
     ));
     return;
   }
