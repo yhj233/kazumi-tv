@@ -13,6 +13,7 @@ import 'package:kazumi/services/platform/webview_feature_service.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/tv/pages/main/tv_main_page.dart';
 import 'package:kazumi/tv/tv_module.dart';
+import 'package:kazumi/tv/core/utils/tv_constants.dart';
 
 /// TV 导航器 GlobalKey
 final tvNavigatorKey = GlobalKey<NavigatorState>();
@@ -45,6 +46,23 @@ void main() async {
   runApp(ModularApp(
     module: tvModule,
     navigatorKey: tvNavigatorKey,
-    child: TVMainPage(),
+    child: MaterialApp(
+      title: 'Kazumi TV',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        primaryColor: TVConstants.focusColor,
+        scaffoldBackgroundColor: TVConstants.backgroundColor,
+        colorScheme: ColorScheme.dark(
+          primary: TVConstants.focusColor,
+          secondary: TVConstants.focusColor,
+          surface: TVConstants.backgroundColor,
+          onSurface: TVConstants.textPrimaryColor,
+          surfaceContainerHighest: TVConstants.surfaceVariantColor,
+        ),
+      ),
+      home: TVMainPage(),
+    ),
   ));
 }

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:kazumi/tv/pages/search/tv_search_page.dart';
 import 'package:kazumi/tv/pages/settings/tv_settings_page.dart';
 import '../../core/utils/tv_constants.dart';
+import '../../tv_app.dart';
 import 'tv_menu_widget.dart';
 import '../collect/tv_collect_page.dart';
 import '../popular/tv_popular_page.dart';
@@ -35,6 +36,8 @@ class _TVMainPageState extends State<TVMainPage> {
   void initState() {
     super.initState();
     _initPages();
+    // 初始化 TV 环境（屏幕方向、焦点策略等）
+    initTVEnvironment();
   }
 
   @override
