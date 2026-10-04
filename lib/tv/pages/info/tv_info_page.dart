@@ -47,6 +47,7 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    debugPrint('TV: TVInfoPage.initState, bangumiItem=${widget.bangumiItem.id}');
 
     _infoController = Modular.get<InfoController>();
     _infoController.bangumiItem = widget.bangumiItem;
