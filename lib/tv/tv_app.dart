@@ -7,6 +7,7 @@ import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'core/utils/tv_constants.dart';
 import 'utils/modular_compat.dart';
+import 'pages/main/tv_main_page.dart';
 
 /// TV 应用入口
 class TVApp extends StatefulWidget {
