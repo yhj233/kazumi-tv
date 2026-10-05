@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kazumi/tv/pages/search/tv_search_page.dart';
 import 'package:kazumi/tv/pages/settings/tv_settings_page.dart';
-import 'package:kazumi/tv/pages/developer/tv_developer_page.dart';
 import 'package:kazumi/tv/utils/modular_compat.dart';
 import '../../core/utils/tv_constants.dart';
 import '../../tv_app.dart';
@@ -13,15 +12,27 @@ import '../timeline/tv_timeline_page.dart';
 
 /// TV 主页面
 class TVMainPage extends StatefulWidget {
-  const TVMainPage({super.key});
+  const TVMainPage({
+    super.key,
+    this.initialTab = 0,
+    this.isRoot = true,
+  });
+
+  /// 初始选中的 Tab（0:推荐 1:时间线 2:收藏 3:搜索 4:设置）
+  final int initialTab;
+
+  /// 是否为根路由。
+  ///
+  /// 根路由下按返回键弹出「退出应用」确认框；
+  /// 被 push 出来的实例（例如开发者菜单跳转）则正常出栈。
+  final bool isRoot;
 
   @override
   State<TVMainPage> createState() => _TVMainPageState();
 }
 
 class _TVMainPageState extends State<TVMainPage> {
-  int _selectedTabIndex = 0;
-  final FocusNode _menuFocusNode = FocusNode();
+  late int _selectedTabIndex = widget.initialTab;
 
   final List<FocusNode> _contentFocusNodes = [
     FocusNode(debugLabel: 'popular_content'),
@@ -40,15 +51,40 @@ class _TVMainPageState extends State<TVMainPage> {
     _initPages();
     // 初始化 TV 环境（屏幕方向、焦点策略等）
     initTVEnvironment();
+    // 全局按键监听：不依赖焦点，任何位置都能响应快捷键。
+    // 只有根实例注册，避免 push 出来的多个实例重复响应。
+    if (widget.isRoot) {
+      HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
+    }
   }
 
   @override
   void dispose() {
-    _menuFocusNode.dispose();
+    if (widget.isRoot) {
+      HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
+    }
     for (final node in _contentFocusNodes) {
       node.dispose();
     }
     super.dispose();
+  }
+
+  /// 全局快捷键处理。
+  ///
+  /// 之前的实现用 `Focus` / `KeyboardListener` 绑定在页面上，
+  /// 只有该节点持有焦点时才能收到按键；但 TV 上焦点一直在内容区，
+  /// 所以按键永远收不到。改用 [HardwareKeyboard] 全局监听，
+  /// 与焦点无关，必定生效。
+  ///
+  /// - `D`：打开开发者菜单
+  bool _handleGlobalKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.keyD) {
+      debugPrint('TV: global shortcut "D" pressed -> /developer');
+      Modular.pushNamed('/developer');
+      return true;
+    }
+    return false;
   }
 
   void _initPages() {
@@ -86,24 +122,13 @@ class _TVMainPageState extends State<TVMainPage> {
     _menuKey.currentState?.requestMenuFocus();
   }
 
-  void _handleDeveloperMenuKey(KeyEvent event) {
-    if (event is KeyDownEvent) {
-      if (event.logicalKey == LogicalKeyboardKey.keyD) {
-        Modular.to.pushNamed('/developer');
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    // 从 BuildContext 获取 Navigator
-    final navState = Navigator.of(context);
-    Modular.setNavigator(navState);
-    return KeyboardListener(
-      focusNode: _menuFocusNode,
-      onKeyEvent: _handleDeveloperMenuKey,
-      child: PopScope(
-      canPop: false,
+    // 尽早把 Navigator 交给兼容层，避免 Modular.pushNamed 时还是 null
+    Modular.setNavigator(Navigator.of(context));
+
+    return PopScope(
+      canPop: !widget.isRoot,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
 
@@ -159,7 +184,6 @@ class _TVMainPageState extends State<TVMainPage> {
           ],
         ),
       ),
-    ),
     );
   }
 }

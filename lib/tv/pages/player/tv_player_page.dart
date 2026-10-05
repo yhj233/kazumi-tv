@@ -398,7 +398,7 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
     if (_isExiting) return;
     _isExiting = true;
     playerController.pause();
-    Modular.to.pop();
+    Modular.pop();
   }
 
   @override

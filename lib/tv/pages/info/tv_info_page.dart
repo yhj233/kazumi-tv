@@ -134,7 +134,7 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
     return TvKeyHandler.handleNavigation(
       event,
       onBack: () {
-        Modular.to.pop();
+        Modular.pop();
         return KeyEventResult.handled;
       },
     );
@@ -230,7 +230,7 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
       if (!mounted) return;
       KazumiDialog.dismiss();
 
-      Modular.to.pushNamed('/player/');
+      Modular.pushNamed('/player');
     } catch (e) {
       if (!mounted) return;
       KazumiLogger().w('TVInfoPage: failed to query video playlist');

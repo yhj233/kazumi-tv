@@ -123,7 +123,7 @@ class _TVSearchResultsState extends State<TVSearchResults> {
           return TVBangumiCard(
             bangumiItem: item,
             focusNode: index == 0 ? widget.firstItemFocusNode : _getGridItemNode(index),
-            onSelect: () => Modular.to.pushNamed('/info', arguments: item),
+            onSelect: () => Modular.pushNamed('/info', arguments: item),
             onFocusChange: (_) => setState(() {}),
           );
         },

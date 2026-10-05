@@ -24,7 +24,14 @@ class TVAboutPage extends StatefulWidget {
 
 class _TVAboutPageState extends State<TVAboutPage> {
   final MyController myController = Modular.get<MyController>();
+  final FocusNode _devMenuFocusNode = FocusNode(debugLabel: 'about_dev_menu');
   bool checkingUpdate = false;
+
+  @override
+  void dispose() {
+    _devMenuFocusNode.dispose();
+    super.dispose();
+  }
 
   Future<void> _handleCheckUpdate() async {
     if (checkingUpdate) return;
@@ -62,7 +69,19 @@ class _TVAboutPageState extends State<TVAboutPage> {
                   focusNode: widget.firstItemFocusNode,
                   onUp: widget.onExitUp,
                   onLeft: widget.onExitLeft,
+                  onDown: () => _devMenuFocusNode.requestFocus(),
                   child: Text(checkingUpdate ? '检查中...' : '检查更新'),
+                ),
+                const SizedBox(height: 16),
+                // 遥控器没有 D 键，这里提供一个必定可用的开发者菜单入口。
+                TVButton(
+                  onTap: () => Modular.pushNamed('/developer'),
+                  focusNode: _devMenuFocusNode,
+                  onUp: widget.firstItemFocusNode == null
+                      ? null
+                      : () => widget.firstItemFocusNode!.requestFocus(),
+                  onLeft: widget.onExitLeft,
+                  child: const Text('开发者菜单'),
                 ),
                 const SizedBox(height: 16),
                 Text(

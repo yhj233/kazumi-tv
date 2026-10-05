@@ -131,7 +131,7 @@ class _TVPluginListPageState extends State<TVPluginListPage> {
             isFirst: false,
             isLast: true,
             onSelect: () {
-              Modular.to.pushNamed('/settings/plugin/shop');
+              Modular.pushNamed('/settings/plugin/shop');
             },
             onFocusChange: (hasFocus) => setState(() {}),
             child: Container(

@@ -104,7 +104,7 @@ class _TVCollectPageState extends State<TVCollectPage> {
   }
 
   void _handleBangumiTap(BangumiItem item) {
-    Modular.to.pushNamed('/info', arguments: item);
+    Modular.pushNamed('/info', arguments: item);
   }
 
   FocusNode _getGridItemNode(int index) {

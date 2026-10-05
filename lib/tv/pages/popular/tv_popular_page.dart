@@ -113,7 +113,7 @@ class _TVPopularPageState extends State<TVPopularPage> {
 
   void _handleBangumiTap(BangumiItem item) {
     debugPrint('TV: _handleBangumiTap called for item ${item.id}');
-    Modular.to.pushNamed('/info/', arguments: item);
+    Modular.pushNamed('/info', arguments: item);
   }
 
   void _handleTabSelected(int index, bool moveToGrid) {

@@ -8,6 +8,8 @@ import 'package:kazumi/repositories/download_repository.dart';
 import 'package:kazumi/repositories/history_repository.dart';
 import 'package:kazumi/repositories/search_history_repository.dart';
 import 'package:kazumi/services/shaders/shader_asset_service.dart';
+import 'package:kazumi/services/player/audio_controller.dart';
+import 'package:kazumi/pages/player/player_controller.dart';
 import 'package:kazumi/services/download/download_manager.dart';
 import 'package:kazumi/tv/pages/main/tv_main_page.dart';
 import 'package:kazumi/tv/pages/developer/tv_developer_page.dart';
@@ -26,11 +28,16 @@ import 'package:kazumi/pages/my/my_controller.dart';
 import 'package:kazumi/pages/download/download_controller.dart';
 import 'package:kazumi/pages/info/info_controller.dart';
 
-/// TV 模块：注册所有单例服务和路由。
+/// TV 模块：注册所有单例服务。
 ///
 /// `flutter_modular` 会自动解析构造函数参数（constructor injection）。
 /// 当 singleton 工厂被调用时，库自动从 DI 容器解析依赖并传递给构造函数。
 /// 所以不需要在工厂里手动调用 `inject<T>()`。
+///
+/// 注意：**路由不走 flutter_modular**（7.x 需要 `MaterialApp.router` +
+/// `ModularApp.routerConfigOf`，否则 `route(...)` 完全是死代码）。
+/// 真正的路由表在 `lib/tv/core/navigation/tv_routes.dart` 的 `tvOnGenerateRoute`，
+/// 这里的 `route(...)` / `module(...)` 仅为兼容声明保留。
 final tvModule = createModule(
   register: (c) {
     c
@@ -65,7 +72,13 @@ final tvModule = createModule(
       ..addSingleton(MyController.new)
       ..addSingleton(DownloadController.new)
       ..addSingleton(InfoController.new)
-      // 子模块
+      // 播放相关：必须注册在**根模块**。
+      // 详情页在跳转到 /player 之前就会 `Modular.get<PlayerController>()`，
+      // 若注册在 path: '/player' 这种 feature 子模块里，
+      // 只有进入该路由后才会绑定，详情页必定拿不到实例。
+      ..addSingleton(AudioController.new)
+      ..addSingleton(PlayerController.new)
+      // 子模块（仅保留路由声明，本应用的路由由 tvOnGenerateRoute 接管）
       ..module(tvPopularModule)
       ..module(tvTimelineModule)
       ..module(tvCollectModule)

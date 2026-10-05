@@ -246,7 +246,7 @@ class _TVTimelinePageState extends State<TVTimelinePage> {
   }
 
   void _handleBangumiTap(BangumiItem item) {
-    Modular.to.pushNamed('/info', arguments: item);
+    Modular.pushNamed('/info', arguments: item);
   }
 
   void _handleTabSelected(int index, bool moveToGrid) {
