@@ -39,12 +39,16 @@ class _TVMainPageState extends State<TVMainPage> {
     _initPages();
     // 初始化 TV 环境（屏幕方向、焦点策略等）
     initTVEnvironment();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Modular.to 已在 main.dart 中通过 scheduleMicrotask 设置为 ModularApp 的 navigator
+    // 在下一帧设置 Modular.to 为 ModularApp 的 navigator
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navState = Modular.navigatorKey?.currentState;
+      if (navState != null) {
+        Modular.setNavigator(navState);
+        debugPrint('TV: TVMainPage set Modular.to to ModularApp navigator');
+      } else {
+        debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null!');
+      }
+    });
   }
 
   @override

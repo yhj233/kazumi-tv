@@ -9,6 +9,9 @@ import 'package:flutter_modular/flutter_modular.dart';
 class Modular {
   static NavigatorState? _navigator;
 
+  /// ModularApp 的 navigator GlobalKey，由 main.dart 设置。
+  static GlobalKey<NavigatorState>? navigatorKey;
+
   /// Set the navigator reference. Called from [TVApp] during build.
   static void setNavigator(NavigatorState navigator) {
     _navigator = navigator;

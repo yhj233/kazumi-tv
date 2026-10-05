@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -69,14 +68,6 @@ void main() async {
   ));
 
   // ModularApp 的 navigator 才是用于路由导航的
-  // 在 ModularApp 构建完成后设置 Modular.to
-  scheduleMicrotask(() {
-    final navState = tvNavigatorKey.currentState;
-    if (navState != null) {
-      Modular.setNavigator(navState);
-      debugPrint('TV: main.dart set Modular.to to ModularApp navigator');
-    } else {
-      debugPrint('TV: main.dart tvNavigatorKey.currentState is null!');
-    }
-  });
+  // 在 TVMainPage.initState 中通过 PostFrameCallback 设置 Modular.to
+  Modular.navigatorKey = tvNavigatorKey;
 }
