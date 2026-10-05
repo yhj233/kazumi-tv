@@ -39,8 +39,8 @@ class _TVMainPageState extends State<TVMainPage> {
     _initPages();
     // 初始化 TV 环境（屏幕方向、焦点策略等）
     initTVEnvironment();
-    // 在下一帧设置 Modular.to 为 ModularApp 的 navigator
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // 等待 ModularApp 构建完成后设置 Modular.to
+    Future.delayed(const Duration(milliseconds: 200)).then((_) {
       final navState = Modular.navigatorKey?.currentState;
       if (navState != null) {
         Modular.setNavigator(navState);
