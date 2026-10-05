@@ -139,6 +139,127 @@ catalog 里 16 条规则**全部** `useNativePlayer: true`。已确认这条路�
 
 ---
 
+## 🎯 修复「集数解析失败」与「搜索无结果(401)」
+
+> ⚠️ **修正上一节的结论**：之前判定「集数解析失败 = 源失效」只对了一半。
+> 内置源确实失效了，但**同时还有一个真正的功能 bug**，
+> 而且这个 bug 会让**任何**源都失败。
+
+### 问题 1：集数解析失败（功能 bug，与源无关）
+
+**证据**：`logcat.txt` 里 `VideoPageController: failed to resolve online episode.
+road=0, episode=1` 之前，**完全没有获取剧集页面的 HTTP 请求**。
+说明代码在发请求之前就退出了。
+
+**根因**：`TVInfoPage._playSearchResult` 直接调用 `changeEpisode`，
+**漏了 `plugin.queryChapterRoads(src)` 这一步**：
+
+```dart
+// lib/pages/video/video_controller.dart
+final resolvedEpisode = _resolveOnlineEpisode(episode, road: currentRoad);
+if (resolvedEpisode == null) {
+  KazumiLogger().e('...failed to resolve online episode...');
+  _failLoading('集数解析失败');   // ← 用户看到的就是这句
+  return;
+}
+// _resolveOnlineEpisode: roadList.isEmpty → return null
+```
+
+`roadList` 只能由 `applyPlaybackArgs(OnlineVideoPlaybackArgs(roads: ...))`
+写入。TV 详情页从来没走过这条路径 → `roadList` 恒为空 → 必然「集数解析失败」。
+
+**上游的正确流程**（`lib/pages/info/source_sheet.dart:_openSearchItem`）：
+
+```dart
+final roads = await plugin.queryChapterRoads(searchItem.src, cancelToken: token);
+if (roads.isEmpty) throw ChapterErrorException(plugin.name);
+task.withContext((context) => context.pushNamed('/video/',
+    arguments: OnlineVideoPlaybackArgs(..., roads: roads)));
+```
+
+再由 `video_page.initState` 调 `applyPlaybackArgs(widget.args)` 把
+`roadList` 写进 controller，最后 `changeEpisode` 开始播放。
+
+**修复**：`tv_info_page.dart._playSearchResult` 改为
+「先 `queryChapterRoads` → 空则提示 → `applyPlaybackArgs(...)` → push /player」。
+
+这同时解释了日志里的一个怪现象：**每次按键会出现两条完全相同的 error**——
+详情页调了一次 `changeEpisode`（失败），push 到播放器后
+`TVPlayerPage.initState` 又调了一次（再失败）。
+
+### 问题 2：搜索输入任何都无结果（401）
+
+**证据**：
+
+```
+Bangumi mirror: https://api.kazumi.fyi/v0/search/subjects?limit=20&offset=0
+HTTP: <-- 401 POST https://api.kazumi.fyi/v0/search/subjects...
+ERROR Network: unknown search problem | badResponse (401)
+```
+
+**根因**：镜像后端对 `POST /v0/search/subjects`（以及评论接口）要求
+`X-AppId` + `X-Timestamp` + `X-Signature` 签名
+（`lib/request/clients/bangumi_client.dart:_shouldSignProtectedMirrorRequest`）。
+密钥来自：
+
+```dart
+// lib/utils/bangumi_mirror_credentials.dart
+// Release/PR CI injects them via --dart-define=KAZUMI_APPID / KAZUMI_KEY.
+const Map<String, String> bangumiMirrorCredentials = {
+  'id': String.fromEnvironment('KAZUMI_APPID'),
+  'value': String.fromEnvironment('KAZUMI_KEY'),
+};
+```
+
+而**本仓库的 CI 漏传了这两个 define**：
+
+| workflow | DANDANAPI_* | KAZUMI_* |
+|----------|-------------|----------|
+| `Kazumi-main/.github/workflows/release.yaml` | ✅ | ✅ |
+| `kazumi-tv-feature-android-tv/.github/workflows/release.yaml` | ✅ | ❌ **缺失** |
+
+→ 密钥是空字符串 → 签名必然校验失败 → **401**。
+
+而 `SettingsKeys.enableBangumiProxy` 默认 `true`、`bangumiAcceleration` 默认 `''`
+→ `BangumiAcceleration.current == mirror` → 所有 Bangumi 请求（含搜索）都走镜像。
+
+**修复（两层）**：
+
+1. **CI**：`release.yaml` 补上
+   `--dart-define=KAZUMI_APPID=${{ secrets.KAZUMI_APPID }}` 与
+   `--dart-define=KAZUMI_KEY=${{ secrets.KAZUMI_KEY }}`。
+   （secret 未配置时展开为空串，无副作用；配了就能正常用镜像搜索。）
+2. **代码兜底**：`BangumiAccelerationInterceptor` 中，当处于镜像模式、
+   目标是受保护接口、且 `hasMirrorCredentials == false` 时，
+   **不改写为镜像**，改用 ECH 路径（`BangumiEchAdapter`，DoH + ECH 直连
+   `api.bgm.tv`）。这样即使没有密钥也不会拿到 401。
+   - 新增 `BangumiAcceleration.hasMirrorCredentials`
+     与 `BangumiAcceleration.isProtectedMirrorEndpoint()`，
+     `BangumiClient` 与 interceptor 共用同一份判定。
+3. **TV 设置**新增「网络 → 番剧数据源」下拉：`自动 / ECH / 直连 / 镜像`，
+   用户可自行切换（ECH 不通时切直连）。
+
+### 顺带修复：观看历史恢复
+
+`TVPlayerPage.initState` 原来直接 `changeEpisode(selectedEpisode...)`，
+既没有历史恢复，又因为 **TV 版 `VideoPageController` 是根单例**
+（上游是路由级、随路由销毁）而可能残留上一部番剧的集数。
+
+新增 `_startPlayback()`，对齐上游 `video_page._initOnlineMode()`：
+
+```dart
+videoPageController.historyOffset = 0;
+videoPageController.resetEpisodeState(episode: 1);   // 先归零
+final progress = _historyController.lastWatching(bangumiItem, currentPlugin.name);
+if (progress != null && road 与 episode 均在范围内) {
+  videoPageController.resetEpisodeState(episode: progress.episode, road: progress.road);
+  if (playResume) videoPageController.historyOffset = progress.progress.inSeconds;
+}
+videoPageController.changeEpisode(...);
+```
+
+---
+
 ## 路由表（`lib/tv/core/navigation/tv_routes.dart`）
 
 | 路径 | 页面 |
@@ -306,25 +427,46 @@ bool _handleGlobalKeyEvent(KeyEvent event) {
 
 按优先级：
 
-1. **设置 → 规则仓库 → 插件商店 → 安装 1~2 条规则**（本次新增，最核心）
-   - 预期：列表出现 16 条规则，可聚焦，按 OK 能安装并提示「导入成功」
-   - 若列表加载失败：点「启用规则镜像」再试（`raw.githubusercontent.com` 国内常不通）
-   - 若点了没反应：检查 `TVPluginShopPage` 的 `_toolNodes` / `_RuleCard._actionFocusNode`
-     的焦点链（左右键能否从卡片走到「安装」按钮）
+1. **详情页 → 选源 → 能否播放**（本次修复的核心，之前必失败）
+   - 预期日志先出现获取剧集页面的请求（如 `GET https://www.agedm.io/detail/...`），
+     然后是 `VideoPageController: changed to 第1集` →
+     `VideoPageController: resolved video URL: ...`
+   - **不应该**再出现 `failed to resolve online episode`
+   - 若出现 `_failLoading('未能获取播放列表')`：说明 `queryChapterRoads` 返回空
+     （该源对这条番剧确实没有剧集，换一个搜索结果试）
 
-2. **安装规则后 → 返回 → 重回详情页 → 能否搜到结果**
-   - 路径必须先退出详情页（详情页 -> back -> 设置 -> 规则仓库 -> 安装 -> back -> 重进详情页），
-     因为 `TVInfoPage.initState` 只在首次构建时跑一次 `queryAllSource`
-   - 预期日志：`PluginSearchService: no results for xxx` 减少，
-     出现 `VideoPageController: resolved video URL: ...`
+2. **搜索页输入关键词 → 能否出结果**（本次修复的第二个核心）
+   - 预期日志：`Bangumi mirror: skip protected endpoint /v0/search/subjects ... fallback to ECH`
+     （或配好 secret 后仍是 `Bangumi mirror: https://api.kazumi.fyi/v0/search/subjects`）
+   - **不应该**再出现 `HTTP: <-- 401 POST .../v0/search/subjects`
+   - 若 ECH 也不通（超时/连接错误）：设置 → 播放设置 → 网络 → **番剧数据源** 改成「直连」或「镜像」
 
-3. **点番剧卡片 → 能否进入详情页**（上次已通过 ✅，回归确认）
+3. **设置 → 规则仓库 → 插件商店 → 安装 1~2 条规则**
+   - 预期：列表出现 16 条规则，可聚焦，按 OK 安装并提示「导入成功」
+   - 若列表加载失败：点「启用规则镜像」再试
+
+4. **安装规则后 → 返回 → 重回详情页 → 能否搜到结果**
+   - 必须先退出详情页再重进，因为 `TVInfoPage.initState` 只在首次构建时跑一次
+     `queryAllSource`
+
+5. **点番剧卡片 → 能否进入详情页**（已通过 ✅，回归确认）
    - 预期日志：`TV: _handleBangumiTap called for item <id>`
 
-4. **详情页 → 选源播放 → 能否进入播放器**
-   - 若报 "PlayerController not registered"，检查 `tvModule` 里
-     `addSingleton(PlayerController.new)` 的位置与 `AudioController` 的注册顺序。
+6. **观看历史恢复**：播到第 2 集 → 返回 → 重进同一番剧同一集源 → 是否从第 2 集续播
+   - 预期日志：`TV: resume playback at road=0 episode=2 offset=...`
 
-5. **按 `D` 键 / 设置→关于→开发者菜单 → 能否打开开发者菜单**
+7. **按 `D` 键 / 设置→关于→开发者菜单 → 能否打开开发者菜单**
 
-6. 返回键行为：主界面弹「退出应用」；详情页 / 播放器 / 规则仓库正常出栈
+8. 返回键行为：主界面弹「退出应用」；详情页 / 播放器 / 规则仓库正常出栈
+
+---
+
+## 如果播放仍然失败的排查顺序
+
+1. 看日志有没有取剧集页面的请求 → 没有就是 `queryChapterRoads` 之前就挂了
+2. 有请求但 `roads.isEmpty` → 该规则对该番剧没有匹配结果，换源
+3. 拿到剧集但仍失败 → 看 `_resolveWithVideoSourceService`（无头 WebView 嗅探）
+   - 相关代码：`lib/webview/video/impl/video_webview_android_impl.dart`
+   - Android 需 `WebViewFeatureService.initialize()`（`main.dart` 已调用）
+   - 相关日志前缀：`[WebView]`、`WebView:`
+4. 模拟器（x86_64）上 WebView 嗅探可能不稳定，**真机（arm64）更可信**
