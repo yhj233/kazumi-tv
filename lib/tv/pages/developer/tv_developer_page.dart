@@ -30,6 +30,26 @@ class _TVDeveloperPageState extends State<TVDeveloperPage> {
     super.dispose();
   }
 
+  BangumiItem _createTestBangumiItem(int id, String name) {
+    return BangumiItem(
+      id: id,
+      type: 2,
+      name: name,
+      nameCn: name,
+      summary: '测试番剧',
+      airDate: '2024-01-01',
+      airWeekday: 1,
+      rank: 0,
+      images: {},
+      tags: [],
+      alias: [],
+      ratingScore: 0.0,
+      votes: 0,
+      votesCount: [],
+      info: '',
+    );
+  }
+
   void _navigate(String route, {Object? arguments}) {
     debugPrint('TV: Developer menu navigating to $route');
     Modular.to.pushNamed(route, arguments: arguments);
@@ -92,22 +112,14 @@ class _TVDeveloperPageState extends State<TVDeveloperPage> {
                 '跳转到详情页 (ID: 622288)',
                 () => _navigate(
                   '/info/',
-                  arguments: BangumiItem(
-                    id: 622288,
-                    name: '测试番剧',
-                    nameCn: '测试中文',
-                  ),
+                  arguments: _createTestBangumiItem(622288, '测试番剧'),
                 ),
               ),
               _buildButton(
                 '跳转到详情页 (ID: 328609)',
                 () => _navigate(
                   '/info/',
-                  arguments: BangumiItem(
-                    id: 328609,
-                    name: 'Test Bangumi',
-                    nameCn: '测试番剧',
-                  ),
+                  arguments: _createTestBangumiItem(328609, 'Test Bangumi'),
                 ),
               ),
               const SizedBox(height: 24),
