@@ -100,7 +100,6 @@ class _TVMainPageState extends State<TVMainPage> {
     final navState = Navigator.of(context);
     Modular.setNavigator(navState);
     return RawKeyboardListener(
-      focusNode: _menuFocusNode,
       onKey: _handleDeveloperMenuKey,
       child: PopScope(
       canPop: false,
