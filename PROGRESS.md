@@ -423,41 +423,154 @@ bool _handleGlobalKeyEvent(KeyEvent event) {
 
 ---
 
+## 🎯 修复「进度条 0:00 / 无法拖动」「弹幕不显示」「Toast 全失效」
+
+### 问题 1：进度条 0:00，且前进会跳回开头
+
+**根因**：`playback.duration` 是 `@observable` 字段，**只有 `syncPlaybackState()` 会写入它**
+（`player_playback_controller.dart:576`）。而全仓库只有**移动端**的
+`player_item.dart:1174` 那个每秒定时器调用它：
+
+```dart
+Timer getPlayerTimer() {
+  return Timer.periodic(const Duration(seconds: 1), (timer) {
+    playerController.syncPlaybackState();   // ← 全靠这一句
+    ...
+```
+
+TV 端的 1 秒定时器（`tv_player_controls.dart:89`）只做了个空转，
+从不调用 `syncPlaybackState()` → `duration` 恒为 `Duration.zero`：
+
+- `ProgressBar(total: playback.duration)` → 总时长 **0:00**
+- `_doSeekStep()` 里 `if (newPosition > duration) newPosition = duration;`
+  → 任何 seek 都被 clamp 回 **0** → 「前进就回到开头」
+
+**修复**：
+- `tv_player_page` 新增每秒定时器，调用 `playerController.syncPlaybackState()`
+- `ProgressBar.total` 与 `_doSeekStep` 改用**实时 getter** `playerDuration`
+  （直接读 `mediaPlayer.state`，不依赖定时器，双保险）
+
+### 问题 2：弹幕功能无效 —— **两个独立原因叠加**
+
+**(a) 数据拉不到：`403`**
+
+```
+403 GET https://api.dandanplay.net/api/v2/bangumi/bgmtv/622206
+PlayerController: failed to get danmaku [BgmBangumiID] 622206 | badResponse (403)
+```
+
+DanDanPlay 与 Bangumi 镜像是同一套机制：需要 `X-AppId` + `X-Signature` 签名，
+密钥来自 `--dart-define=DANDANAPI_APPID / DANDANAPI_KEY`
+（`lib/utils/dandan_credentials.dart`）。
+
+⚠️ **需要你操作**：在 GitHub 仓库 `yhj233/kazumi-tv` 的
+**Settings → Secrets and variables → Actions** 里添加：
+
+| Secret | 用途 | 从哪来 |
+|--------|------|--------|
+| `DANDANAPI_APPID` | 弹幕（必需） | https://doc.dandanplay.com/ 申请开发者应用 |
+| `DANDANAPI_KEY` | 弹幕（必需） | 同上 |
+| `KAZUMI_APPID` | Bangumi 镜像搜索（可选） | 上游私有，拿不到也行（已有 ECH 兜底） |
+| `KAZUMI_KEY` | 同上 | 同上 |
+
+workflow 里已经写好了 `--dart-define`，**只要 secrets 存在就会自动生效**，
+不需要改代码。缺 DaneDanPlay 密钥时日志现在会明确提示
+「构建时缺少 DANDANAPI_APPID/DANDANAPI_KEY」。
+
+**(b) 即使拿到数据也不显示：发射逻辑从未移植**
+
+把弹幕推到画布上的 `_emitDanmakusForCurrentPosition()`
+（`player_item.dart:1129`）**只在移动端**被那个每秒定时器调用。
+TV 端 `playerController.danmaku.canvasController` 只被**赋值**
+（`tv_player_page.dart` 的 `DanmakuScreen.createdController`），
+**从来没有 `addDanmaku()` 被调用过** → 画布永远是空的。
+
+**修复**：把 `_emitDanmakusForCurrentPosition()` +
+`_isDanmakuSourceEnabled()` + `_danmakuItemType()` 移植到 `tv_player_page`，
+并随每秒定时器驱动。
+（其实 `_danmakuColor` / `_danmakuBiliBiliSource` / `_danmakuGamerSource` /
+`_danmakuDanDanSource` 这几个字段早就读进 State 了却从未被使用 —— 正是缺了这段。）
+
+### 问题 3：所有 Toast 都失败
+
+```
+Kazumi Dialog Error: No ScaffoldMessenger available to show Toast
+```
+
+`KazumiDialog.showToast` 在没有 context 时会回退到
+`rootScaffoldMessengerKey.currentState`（`dialog.dart:215`），
+而 `main.dart` 的 `MaterialApp` **没有挂 `scaffoldMessengerKey`**
+（上游 `app_widget.dart:316` 是挂了的）。
+
+→ 所有错误提示被静默丢弃，等于**完全看不到反馈**。
+已补 `scaffoldMessengerKey: rootScaffoldMessengerKey`。
+
+### 问题 4：详情页加载完后选中的条目位置不确定
+
+`TVSearchResultSection` 原来是「**哪个源先搜完就锁定哪个源的第一条**」
+（`_firstFocusNodeSet` 只认第一次回调），而各源完成顺序不定
+→ 选中的条目位置飘忽，经常落在靠后的位置。
+
+**修复**：按列表展示顺序挑「**最靠前分组的第一条**」
+（新增 `_firstNodeByPlugin` + `_visiblePlugins` 顺序匹配），
+并在 `TVInfoPage` 里去掉 `_firstFocusNodeSet` 锁，允许更新为更靠前的候选。
+
+---
+
 ## 下一次构建要重点验证的内容
 
 按优先级：
 
-1. **详情页 → 选源 → 能否播放**（本次修复的核心，之前必失败）
-   - 预期日志先出现获取剧集页面的请求（如 `GET https://www.agedm.io/detail/...`），
-     然后是 `VideoPageController: changed to 第1集` →
-     `VideoPageController: resolved video URL: ...`
-   - **不应该**再出现 `failed to resolve online episode`
-   - 若出现 `_failLoading('未能获取播放列表')`：说明 `queryChapterRoads` 返回空
-     （该源对这条番剧确实没有剧集，换一个搜索结果试）
+1. **详情页 → 选源 → 播放 → 拖进度条**（本轮核心）
+   - 进度条应显示真实总时长（不再是 `0:00`）
+   - 左右方向键快进/快退应生效，**不再跳回开头**
+   - 预期日志：视频起播后每秒都在跑 `syncPlaybackState`（无日志，但进度条会动）
 
-2. **搜索页输入关键词 → 能否出结果**（本次修复的第二个核心）
-   - 预期日志：`Bangumi mirror: skip protected endpoint /v0/search/subjects ... fallback to ECH`
-     （或配好 secret 后仍是 `Bangumi mirror: https://api.kazumi.fyi/v0/search/subjects`）
-   - **不应该**再出现 `HTTP: <-- 401 POST .../v0/search/subjects`
-   - 若 ECH 也不通（超时/连接错误）：设置 → 播放设置 → 网络 → **番剧数据源** 改成「直连」或「镜像」
+2. **弹幕**
+   - 配好 `DANDANAPI_APPID/KEY` 后：日志应出现
+     `PlayerController: attempting to get danmaku [BgmBangumiID] ...` 且**不再 403**，
+     并在播放 1~2 秒后看到弹幕飘过
+   - 未配密钥时：日志会明确提示「构建时缺少 DANDANAPI_APPID/DANDANAPI_KEY」
 
-3. **设置 → 规则仓库 → 插件商店 → 安装 1~2 条规则**
-   - 预期：列表出现 16 条规则，可聚焦，按 OK 安装并提示「导入成功」
-   - 若列表加载失败：点「启用规则镜像」再试
+3. **任意错误提示（Toast）应能正常弹出**（不再有 No ScaffoldMessenger 日志）
 
-4. **安装规则后 → 返回 → 重回详情页 → 能否搜到结果**
-   - 必须先退出详情页再重进，因为 `TVInfoPage.initState` 只在首次构建时跑一次
-     `queryAllSource`
+4. **详情页加载完后，选中的应是「最靠前分组的第一条」**
 
-5. **点番剧卡片 → 能否进入详情页**（已通过 ✅，回归确认）
-   - 预期日志：`TV: _handleBangumiTap called for item <id>`
+5. **详情页 → 选源 → 能否播放**（上轮已修复，回归）
+   - 预期：`VideoPageController: changed to 第1集` → `resolved video URL: ...`
 
-6. **观看历史恢复**：播到第 2 集 → 返回 → 重进同一番剧同一集源 → 是否从第 2 集续播
+6. **搜索页输入关键词 → 能否出结果**
+   - 预期：`Bangumi mirror: skip protected endpoint /v0/search/subjects ... fallback to ECH`
+   - 不应再出现 `401`
+
+7. **设置 → 规则仓库 → 插件商店 → 安装规则**；装完重进详情页看是否多出源
+
+8. **观看历史恢复**：播到第 2 集 → 返回 → 重进 → 应从第 2 集续播
    - 预期日志：`TV: resume playback at road=0 episode=2 offset=...`
 
-7. **按 `D` 键 / 设置→关于→开发者菜单 → 能否打开开发者菜单**
+9. **按 `D` 键 / 设置→关于→开发者菜单**
 
-8. 返回键行为：主界面弹「退出应用」；详情页 / 播放器 / 规则仓库正常出栈
+10. 返回键行为：主界面弹「退出应用」；详情页 / 播放器 / 规则仓库正常出栈
+
+> 关于「从播放界面返回会显示『正在获取播放列表』转圈」：
+> 该 loading 来自 `TVInfoPage._playSearchResult` 的 `KazumiDialog.showLoading`。
+> 若出现「转圈不消失／需手动返回」，多半是**同一次点击触发了两次** `_playSearchResult`
+> （两次 showLoading 只 dismiss 了一次）。排查方向：
+> `TVSearchResultSection` 里 `TvGridItem.onSelect` 与 `TVSearchResultCard.onSelect`
+> 是否都被绑定、以及 `TvKeyHandler` 的 `onEnter`/`onSelect` 是否会重复触发。
+> 本轮未改（用户标注「可能不需要修」）。
+
+---
+
+## 关键教训（给后续接手的人）
+
+**TV 移植最容易漏的是「移动端 widget 里的每秒定时器」**。
+上游把「同步播放状态」「发射弹幕」「写观看历史」「自动连播」全部塞在
+`player_item.dart` 的 `getPlayerTimer()` 里 —— 那是移动端特有的 widget，
+TV 版重写成自己的播放器页面时，这些副作用**全都没有被带过来**。
+
+排查同类问题的姿势：在移动端找到对应的 widget，看它的 `initState` /
+`Timer.periodic` / 各种 `reaction` 里做了什么，逐条对照 TV 版有没有。
 
 ---
 
