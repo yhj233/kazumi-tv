@@ -22,19 +22,38 @@ class BangumiAccelerationInterceptor extends Interceptor {
         case BangumiAcceleration.direct:
           break;
         case BangumiAcceleration.ech:
-          options.path = uri.replace(scheme: 'https').toString();
-          options.queryParameters = {};
-          options.extra[_echRequestKey] = true;
+          _applyEch(options, uri);
         case BangumiAcceleration.mirror:
-          options.path =
-              ApiEndpoints.bangumiMirrorDomain +
-              uri.path +
-              (uri.hasQuery ? '?${uri.query}' : '');
-          options.queryParameters = {};
-          KazumiLogger().d('Bangumi mirror: ${options.path}');
+          // 镜像后端对搜索/评论接口要求签名，而签名密钥只在 CI 注入了
+          // KAZUMI_APPID / KAZUMI_KEY 时才存在。缺少密钥时走镜像必定 401，
+          // 这里改为回退 ECH（DoH + ECH 直连 Bangumi）。
+          if (!BangumiAcceleration.hasMirrorCredentials &&
+              BangumiAcceleration.isProtectedMirrorEndpoint(
+                options.method,
+                uri.path,
+              )) {
+            KazumiLogger().w(
+              'Bangumi mirror: ${uri.path} requires signature but '
+              'KAZUMI_APPID/KAZUMI_KEY is missing, fallback to ECH',
+            );
+            _applyEch(options, uri);
+          } else {
+            options.path =
+                ApiEndpoints.bangumiMirrorDomain +
+                uri.path +
+                (uri.hasQuery ? '?${uri.query}' : '');
+            options.queryParameters = {};
+            KazumiLogger().d('Bangumi mirror: ${options.path}');
+          }
       }
     }
     handler.next(options);
+  }
+
+  void _applyEch(RequestOptions options, Uri uri) {
+    options.path = uri.replace(scheme: 'https').toString();
+    options.queryParameters = {};
+    options.extra[_echRequestKey] = true;
   }
 }
 

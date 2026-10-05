@@ -73,9 +73,8 @@ final tvModule = createModule(
       ..addSingleton(DownloadController.new)
       ..addSingleton(InfoController.new)
       // 播放相关：必须注册在**根模块**。
-      // 详情页在跳转到 /player 之前就会 `Modular.get<PlayerController>()`，
-      // 若注册在 path: '/player' 这种 feature 子模块里，
-      // 只有进入该路由后才会绑定，详情页必定拿不到实例。
+      // 若注册在 path: '/player' 这种 feature 子模块里，只有进入该路由后
+      // 才会绑定，播放器页面初始化时拿不到实例。
       ..addSingleton(AudioController.new)
       ..addSingleton(PlayerController.new)
       // 子模块（仅保留路由声明，本应用的路由由 tvOnGenerateRoute 接管）

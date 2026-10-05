@@ -11,6 +11,7 @@ import 'tv_episode_menu.dart';
 import 'tv_progress_indicator.dart';
 import 'package:kazumi/pages/player/player_controller.dart';
 import 'package:kazumi/pages/video/video_controller.dart';
+import 'package:kazumi/pages/history/history_controller.dart';
 import 'package:kazumi/pages/player/player_item_surface.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/tv/utils/modular_compat.dart';
@@ -32,6 +33,7 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
   final PlayerController playerController = Modular.get<PlayerController>();
   final VideoPageController videoPageController =
       Modular.get<VideoPageController>();
+  final HistoryController _historyController = Modular.get<HistoryController>();
   final FocusNode _pageFocusNode = FocusNode();
   final FocusNode _controlsFocusNode = FocusNode();
   final _danmuKey = GlobalKey();
@@ -104,12 +106,8 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
         GStorage.getSetting(SettingsKeys.danmakuDanDanSource);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      videoPageController.changeEpisode(
-        videoPageController.selectedEpisode.episode,
-        currentRoad: videoPageController.selectedEpisode.road,
-        offset: videoPageController.historyOffset,
-        playerController: playerController,
-      );
+      if (!mounted) return;
+      _startPlayback();
     });
 
     _completionReaction = reaction(
@@ -119,6 +117,49 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
           _autoPlayNextEpisode();
         }
       },
+    );
+  }
+
+  /// 开始播放。
+  ///
+  /// 与上游 `video_page._initOnlineMode()` 保持一致：
+  /// 优先从观看历史恢复「上次看到第几集 / 第几个播放源 / 播放进度」。
+  ///
+  /// TV 版的 `VideoPageController` 是**根单例**（不随路由销毁），
+  /// 所以必须先显式 `resetEpisodeState` 归零，否则会残留上一部番剧的集数。
+  void _startPlayback() {
+    final bool resume = GStorage.getSetting(SettingsKeys.playResume);
+    videoPageController.historyOffset = 0;
+    videoPageController.resetEpisodeState(episode: 1);
+
+    if (!videoPageController.isOfflineMode &&
+        videoPageController.roadList.isNotEmpty) {
+      final progress = _historyController.lastWatching(
+        videoPageController.bangumiItem,
+        videoPageController.currentPlugin.name,
+      );
+      if (progress != null &&
+          videoPageController.roadList.length > progress.road &&
+          videoPageController.roadList[progress.road].data.length >=
+              progress.episode) {
+        videoPageController.resetEpisodeState(
+          episode: progress.episode,
+          road: progress.road,
+        );
+        if (resume) {
+          videoPageController.historyOffset = progress.progress.inSeconds;
+        }
+        debugPrint(
+          'TV: resume playback at road=${progress.road} episode=${progress.episode} offset=${videoPageController.historyOffset}',
+        );
+      }
+    }
+
+    videoPageController.changeEpisode(
+      videoPageController.selectedEpisode.episode,
+      currentRoad: videoPageController.selectedEpisode.road,
+      offset: videoPageController.historyOffset,
+      playerController: playerController,
     );
   }
 

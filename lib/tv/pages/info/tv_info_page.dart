@@ -8,8 +8,10 @@ import 'package:kazumi/plugins/plugins.dart';
 import 'package:kazumi/services/plugin/plugin_search_service.dart';
 import 'package:kazumi/plugins/plugins_controller.dart';
 import 'package:kazumi/pages/video/video_controller.dart';
+import 'package:kazumi/pages/video/video_playback_args.dart';
+import 'package:kazumi/services/plugin/rule_engine_models.dart'
+    show RuleCancelToken;
 import 'package:kazumi/pages/collect/collect_controller.dart';
-import 'package:kazumi/pages/player/player_controller.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/services/logging/logger.dart';
@@ -32,7 +34,6 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
   late InfoController _infoController;
   late VideoPageController _videoPageController;
   late PluginSearchService _queryManager;
-  late PlayerController _playerController;
 
   final ScrollController _leftPanelScrollController = ScrollController();
   final FocusNode _pageFocusNode = FocusNode(debugLabel: 'info_page');
@@ -57,7 +58,6 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
     _infoController.pluginSearchResponseList.clear();
     _videoPageController = Modular.get<VideoPageController>();
     _videoPageController.resetEpisodeState(episode: 1);
-    _playerController = Modular.get<PlayerController>();
 
     if (_infoController.bangumiItem.summary == '' ||
         _infoController.bangumiItem.votesCount.isEmpty) {
@@ -193,14 +193,32 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
 
     KazumiDialog.showLoading(
       context: context,
-      msg: '正在获取播放信息',
+      msg: '正在获取播放列表',
       barrierDismissible: false,
       onDismiss: () {},
     );
 
+    final RuleCancelToken cancelToken = RuleCancelToken();
+
     try {
-      _videoPageController.bangumiItem = widget.bangumiItem;
-      _videoPageController.currentPlugin = plugin;
+      // 关键一步：必须先用插件规则把「搜索结果详情页」解析成**剧集列表**。
+      // 缺少这一步 roadList 是空的，changeEpisode 会立刻报「集数解析失败」，
+      // 而且不会发出任何网络请求（日志里能看到这个特征）。
+      final roads = await plugin.queryChapterRoads(
+        src,
+        cancelToken: cancelToken,
+      );
+
+      if (!mounted) return;
+
+      if (roads.isEmpty) {
+        KazumiDialog.dismiss();
+        KazumiDialog.showToast(
+          message: '未能获取播放列表，请重试或选择其他结果',
+          context: context,
+        );
+        return;
+      }
 
       String title = widget.bangumiItem.nameCn.isNotEmpty
           ? widget.bangumiItem.nameCn
@@ -218,22 +236,25 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
         }
       }
 
-      _videoPageController.title = title;
-      _videoPageController.src = src;
-
-      await _videoPageController.changeEpisode(
-        1,
-        currentRoad: 0,
-        playerController: _playerController,
+      // 与上游 `video_page` 保持一致：先把参数（含 roadList）写进 controller，
+      // 再由 `TVPlayerPage.initState` 调用 changeEpisode 开始播放。
+      // 之前这里直接调 changeEpisode，既漏了 roads，又会和播放器重复触发一次。
+      _videoPageController.applyPlaybackArgs(
+        OnlineVideoPlaybackArgs(
+          bangumiItem: widget.bangumiItem,
+          plugin: plugin,
+          title: title,
+          src: src,
+          roads: roads,
+        ),
       );
 
-      if (!mounted) return;
       KazumiDialog.dismiss();
-
       Modular.pushNamed('/player');
     } catch (e) {
       if (!mounted) return;
-      KazumiLogger().w('TVInfoPage: failed to query video playlist');
+      KazumiLogger()
+          .w('TVInfoPage: failed to query video playlist', error: e);
       KazumiDialog.dismiss();
       KazumiDialog.showToast(message: '播放失败，请重试', context: context);
     }

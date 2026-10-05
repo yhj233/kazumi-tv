@@ -48,7 +48,9 @@ jobs:
         run: |
           flutter build apk --split-per-abi \
             --dart-define=DANDANAPI_APPID=${{ secrets.DANDANAPI_APPID }} \
-            --dart-define=DANDANAPI_KEY=${{ secrets.DANDANAPI_KEY }}
+            --dart-define=DANDANAPI_KEY=${{ secrets.DANDANAPI_KEY }} \
+            --dart-define=KAZUMI_APPID=${{ secrets.KAZUMI_APPID }} \
+            --dart-define=KAZUMI_KEY=${{ secrets.KAZUMI_KEY }}
         shell: bash
       - name: Package android build output
         run: |

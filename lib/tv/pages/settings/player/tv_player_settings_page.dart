@@ -15,6 +15,25 @@ const Map<int, String> aspectRatioTypeMap = {
   3: '1:1',
 };
 
+/// 番剧数据源模式（对应 `SettingsKeys.bangumiAcceleration`）。
+///
+/// 空字符串走「自动」：镜像后端对搜索/评论接口要求 `X-AppId` + `X-Signature`
+/// 签名，而签名密钥只在 CI 注入了 `KAZUMI_APPID` / `KAZUMI_KEY` 时才存在；
+/// 缺少密钥时自动回退 ECH，否则搜索会直接 401（表现为「输入任何都无结果」）。
+const Map<String, String> bangumiAccelerationLabelMap = {
+  '': '自动',
+  'ech': 'ECH',
+  'direct': '直连',
+  'mirror': '镜像',
+};
+
+String bangumiAccelerationSubtitle(String mode) => switch (mode) {
+  'ech' => 'DoH + ECH 直连 Bangumi，适合被阻断的网络',
+  'direct' => '直接访问 api.bgm.tv，不使用任何加速',
+  'mirror' => '强制走 Kazumi 镜像（搜索接口需要签名密钥）',
+  _ => '自动选择（推荐）：镜像缺少签名密钥时自动回退 ECH',
+};
+
 class TVPlayerSettingsPage extends StatefulWidget {
   final FocusNode? firstItemFocusNode;
   final VoidCallback? onExitUp;
@@ -38,6 +57,7 @@ class _TVPlayerSettingsPageState extends State<TVPlayerSettingsPage> {
   late bool lowMemoryMode;
   late double defaultPlaySpeed;
   late int defaultAspectRatioType;
+  late String bangumiAccelerationMode;
 
   @override
   void initState() {
@@ -46,6 +66,15 @@ class _TVPlayerSettingsPageState extends State<TVPlayerSettingsPage> {
     lowMemoryMode = GStorage.getSetting(SettingsKeys.lowMemoryMode);
     defaultPlaySpeed = GStorage.getSetting(SettingsKeys.defaultPlaySpeed);
     defaultAspectRatioType = GStorage.getSetting(SettingsKeys.defaultAspectRatioType);
+    bangumiAccelerationMode =
+        GStorage.getSetting(SettingsKeys.bangumiAcceleration);
+  }
+
+  void updateBangumiAcceleration(String value) {
+    GStorage.putSetting(SettingsKeys.bangumiAcceleration, value);
+    setState(() {
+      bangumiAccelerationMode = value;
+    });
   }
 
   void updateHAenable(bool value) {
@@ -122,6 +151,21 @@ class _TVPlayerSettingsPageState extends State<TVPlayerSettingsPage> {
           onChanged: (value) {
             if (value != null) {
               updateDefaultAspectRatioType(value);
+            }
+          },
+          onMoveLeft: widget.onExitLeft,
+          sidebarFocusNode: widget.sidebarFocusNode,
+        ),
+        const TVSettingsGroupHeader(title: '网络'),
+        TVSettingsDropdownRow<String>(
+          label: '番剧数据源',
+          subtitle: bangumiAccelerationSubtitle(bangumiAccelerationMode),
+          value: bangumiAccelerationMode,
+          items: bangumiAccelerationLabelMap.keys.toList(),
+          itemLabel: (mode) => bangumiAccelerationLabelMap[mode] ?? mode,
+          onChanged: (value) {
+            if (value != null) {
+              updateBangumiAcceleration(value);
             }
           },
           isLast: true,
