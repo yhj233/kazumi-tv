@@ -45,23 +45,20 @@ class _TVMainPageState extends State<TVMainPage> {
   }
 
   void _initNavigator() {
-    Future.delayed(const Duration(milliseconds: 1000)).then((_) {
+    _tryInitNavigator(0);
+  }
+
+  void _tryInitNavigator(int attempt) {
+    Future.delayed(const Duration(milliseconds: 500)).then((_) {
       final navState = Modular.navigatorKey?.currentState;
       if (navState != null) {
         Modular.setNavigator(navState);
-        debugPrint('TV: TVMainPage set Modular.to to ModularApp navigator');
+        debugPrint('TV: TVMainPage set Modular.to to ModularApp navigator (attempt $attempt)');
+      } else if (attempt < 10) {
+        debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null, retrying (attempt $attempt)');
+        _tryInitNavigator(attempt + 1);
       } else {
-        debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null after 1000ms!');
-        // 重试
-        Future.delayed(const Duration(milliseconds: 1000)).then((_) {
-          final navState2 = Modular.navigatorKey?.currentState;
-          if (navState2 != null) {
-            Modular.setNavigator(navState2);
-            debugPrint('TV: TVMainPage set Modular.to on second try');
-          } else {
-            debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null after 2000ms!');
-          }
-        });
+        debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null after 10 attempts!');
       }
     });
   }
