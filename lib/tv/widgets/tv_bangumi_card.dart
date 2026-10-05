@@ -40,6 +40,7 @@ class TVBangumiCard extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: () {
           debugPrint('TV: TVBangumiCard onTap called');
+          focusNode?.requestFocus();
           onSelect?.call();
         },
         child: TvCardVisual(

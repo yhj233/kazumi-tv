@@ -36,6 +36,7 @@ class TVCard extends StatelessWidget {
       onFocusChange: onFocusChange,
       onKeyEvent: _handleKeyEvent,
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () {
           focusNode.requestFocus();
           onSelect?.call();
