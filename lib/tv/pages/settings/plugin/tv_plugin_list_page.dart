@@ -75,7 +75,8 @@ class _TVPluginListPageState extends State<TVPluginListPage> {
                   final plugin = pluginsController.pluginList[index];
                   return TVPluginCard(
                     plugin: plugin,
-                    autofocus: index == 0,
+                    // 父级（设置页）接管焦点时不要 autofocus
+                    autofocus: index == 0 && _ownsUpdateAllNode,
                     onDelete: () => _handleDeletePlugin(plugin),
                   );
                 },
@@ -94,7 +95,8 @@ class _TVPluginListPageState extends State<TVPluginListPage> {
         children: [
           TvHorizontalListItem(
             focusNode: _updateAllFocusNode,
-            autofocus: true,
+            // 父级（设置页）接管焦点时不要 autofocus
+            autofocus: _ownsUpdateAllNode,
             exitRight: _pluginShopFocusNode,
             onMoveUp: widget.onExitUp,
             isFirst: true,

@@ -8,6 +8,7 @@ import 'package:kazumi/tv/core/widgets/tv_card_visual.dart';
 import 'player/tv_player_settings_page.dart';
 import 'danmaku/tv_danmaku_settings_page.dart';
 import 'about/tv_about_page.dart';
+import 'plugin/tv_plugin_list_page.dart';
 
 class TVSettingsPage extends StatefulWidget {
   const TVSettingsPage({
@@ -33,6 +34,7 @@ class _TVSettingsPageState extends State<TVSettingsPage> {
   final List<_SettingsMenuItem> _menuItems = [
     _SettingsMenuItem(Icons.play_circle, '播放设置'),
     _SettingsMenuItem(Icons.comment, '弹幕设置'),
+    _SettingsMenuItem(Icons.extension, '规则仓库'),
     _SettingsMenuItem(Icons.info, '关于'),
   ];
 
@@ -209,8 +211,15 @@ class _TVSettingsPageState extends State<TVSettingsPage> {
           onExitUp: _moveFocusToTab,
           onExitLeft: widget.onExitToMenu,
         ),
-        TVAboutPage(
+        // 规则仓库：内置规则经常失效，这里可以浏览/安装社区规则。
+        // 注意：这里传入了 firstItemFocusNode，页面内部不应再 autofocus，
+        // 否则 IndexedStack 里所有子页会同时抢焦点。
+        TVPluginListPage(
           firstItemFocusNode: _pageFirstItemNodes[2],
+          onExitUp: _moveFocusToTab,
+        ),
+        TVAboutPage(
+          firstItemFocusNode: _pageFirstItemNodes[3],
           onExitUp: _moveFocusToTab,
           onExitLeft: widget.onExitToMenu,
         ),
