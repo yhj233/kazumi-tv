@@ -40,27 +40,6 @@ class _TVMainPageState extends State<TVMainPage> {
     _initPages();
     // 初始化 TV 环境（屏幕方向、焦点策略等）
     initTVEnvironment();
-    // 等待 ModularApp 构建完成后设置 Modular.to
-    _initNavigator();
-  }
-
-  void _initNavigator() {
-    _tryInitNavigator(0);
-  }
-
-  void _tryInitNavigator(int attempt) {
-    Future.delayed(const Duration(milliseconds: 500)).then((_) {
-      final navState = Modular.navigatorKey?.currentState;
-      if (navState != null) {
-        Modular.setNavigator(navState);
-        debugPrint('TV: TVMainPage set Modular.to to ModularApp navigator (attempt $attempt)');
-      } else if (attempt < 10) {
-        debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null, retrying (attempt $attempt)');
-        _tryInitNavigator(attempt + 1);
-      } else {
-        debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null after 10 attempts!');
-      }
-    });
   }
 
   @override
@@ -119,7 +98,9 @@ class _TVMainPageState extends State<TVMainPage> {
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('TVMainPage.build called');
+    // 从 BuildContext 获取 Navigator
+    final navState = Navigator.of(context);
+    Modular.setNavigator(navState);
     return Focus(
       focusNode: _menuFocusNode,
       onKeyEvent: _handleDeveloperMenuKey,
