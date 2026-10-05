@@ -64,6 +64,81 @@ runApp(ModularApp(
 
 ---
 
+## 🎯 规则仓库接入（解决"获取集数失败"）
+
+### 结论：是**源的问题**，不是功能问题
+
+`logcat.txt`（详情页 ID 622288）显示 3 条内置规则全部不可用：
+
+| 规则 | 站点 | 结果 |
+|------|------|------|
+| `agedm` | www.agedm.io | HTTP 200 但无有效结果 |
+| `DM84` | dmbus.cc | `connectionError ... Connection reset by peer`（站点已挂） |
+| `aafun` | www.aafun.cc | HTTP 200 但 `no results for aafun` |
+
+→ `VideoPageController: failed to resolve online episode. road=0, episode=1`
+
+同时 `Rules mirror: https://raw.gitcode.com/gh_mirrors/ka/KazumiRules/raw/main/index.json`
+返回 **200**，说明规则仓库本身是通的。
+
+### 真正的缺口：TV 设置界面没有「规则仓库」入口
+
+对比 `Kazumi-main` 与 `kazumi-tv-feature-android-tv`：
+`lib/plugins`、`lib/services/plugin`、`lib/request`、`lib/pages` **文件完全相同**
+（`Kazumi-main` 是上游，TV 分支只是多了一层 `lib/tv/`）。
+
+也就是说 `TVPluginListPage`（已安装规则 + 更新全部 + 商店入口）和
+`TVPluginShopPage`（规则目录 + 安装）**代码早就存在**，
+但 grep 显示它们**只在开发者菜单里可达**：
+
+```
+lib/tv/core/navigation/tv_routes.dart:45   /settings/plugin
+lib/tv/core/navigation/tv_routes.dart:48   /settings/plugin/shop
+lib/tv/pages/developer/tv_developer_page.dart:87,91
+```
+
+`TVSettingsPage` 只有 播放设置 / 弹幕设置 / 关于 三个 Tab —— **用户无法安装社区规则**，
+只能用那 3 条已失效的内置规则。
+
+### 修复内容
+
+| 文件 | 改动 |
+|------|------|
+| `lib/tv/pages/settings/tv_settings_page.dart` | 新增第 3 个 Tab **「规则仓库」**（播放设置 / 弹幕设置 / **规则仓库** / 关于），内容为 `TVPluginListPage` |
+| `lib/tv/pages/settings/plugin/tv_plugin_list_page.dart` | `autofocus` 改为只在父级未接管焦点时生效（`_ownsUpdateAllNode`）。否则嵌入 `IndexedStack` 时 4 个子页会同时抢焦点 |
+| `lib/tv/pages/settings/plugin/tv_plugin_shop_page.dart` | 重写为完整的规则仓库页 |
+
+新的 `TVPluginShopPage`：
+
+- **顶部工具行**：`刷新` / `全部 N` / `已安装 N` / `可更新 N` / `镜像 开·关`
+- **列表**：规则名 + 版本标签 + `需验证` 标签 + 作者 + 更新时间 + `安装`/`更新`/`已安装`
+- **状态**：加载中（转圈 / 线性进度）、加载失败（`重试` + `启用/关闭规则镜像`）、空列表
+- 按 `lastUpdate` 倒序；复用 `updatePluginWithFeedback`，能正确提示
+  「规则需要更高版本客户端」「远程规则版本不高于本地，已跳过更新」等
+- 安装成功后提示：返回详情页**重新搜索**即可
+
+**规则镜像开关很重要**：规则仓库有两个源——
+`https://raw.githubusercontent.com/Predidit/KazumiRules/main/`（直连）
+与 `https://raw.gitcode.com/gh_mirrors/ka/KazumiRules/raw/main/`（gitcode 镜像）。
+`_RulesMirrorInterceptor` 在**每次请求**时读取 `SettingsKeys.enableGitProxy`，
+所以页面里切换后立即重新拉取即可生效。国内直连 GitHub 常失败。
+
+### 规则仓库当前内容（2026-10 实测）
+
+`index.json` 返回 **16 条规则**：`7sefun` `aafun` `AGE` `akianime` `baimao` `dalvdm`
+`DM84` `ezdmw` `giriGiriLove` `mgnacg` `moonci` `mutefun` `MXdm` `sorani`
+`xfdmneo` `xfdmnext`（其中 `dalvdm`/`giriGiriLove`/`mgnacg`/`mutefun` 标记 `需验证`）。
+
+### 关于 `useNativePlayer`
+
+catalog 里 16 条规则**全部** `useNativePlayer: true`。已确认这条路径在 TV 版可用：
+`lib/webview/video/` 下有完整的 `VideoWebviewController`（Android 用
+`flutter_inappwebview` 无头 WebView 嗅探 m3u8），
+`video_controller.dart:596` 的 `_resolveWithVideoSourceService` 会走它。
+（`useNativePlayer` 字段本身在播放逻辑里没有被读取，仅用于列表展示/编辑器。）
+
+---
+
 ## 路由表（`lib/tv/core/navigation/tv_routes.dart`）
 
 | 路径 | 页面 |
@@ -131,14 +206,26 @@ bool _handleGlobalKeyEvent(KeyEvent event) {
 ### 2. Search API 401
 `POST https://api.kazumi.fyi/v0/search/subjects` 返回 401。可能认证或 API 变更。
 
-### 3. 缺少"添加来源仓库"功能
-原始 Kazumi 有插件/来源管理，TV 版本缺少入口（`tv_plugin_list_page.dart`）。
+### 3. ~~缺少"添加来源仓库"功能~~ ✅ 已实现
+设置 → 规则仓库 已接入（见上文「规则仓库接入」）。
+注意：目前只能**安装社区规则**，还不支持**自定义仓库地址**
+（上游 `ApiEndpoints.pluginShop` 也是 `const`，所以要加需要改上游设计）。
 
-### 4. `lib/tv/tv_app.dart` 已成死代码
+### 4. 内置规则仍是 3 条失效规则
+`assets` 里打包的 `agedm` / `DM84` / `aafun` 已不可用。
+即使装了新规则，这 3 条仍然会出现在「更新全部」里并报错
+（已安装列表可逐条删除）。可选优化：首次启动时自动清理失效规则，
+或把默认打包规则换成仓库里可用的。
+
+### 5. `lib/tv/tv_app.dart` 已成死代码
 `TVApp` 类未被使用（`main.dart` 不再用它），但 `initTVEnvironment()` 仍在被
 `TVMainPage.initState` 调用，所以文件必须保留。
+另外 `initTVEnvironment()` 每次启动都会**强制写入** 7 项设置
+（`autoPlayNext` / `playResume` / 3 个弹幕源 / `enableGitProxy` / `defaultStartupPage`），
+会覆盖用户改动 —— 包括规则镜像开关，重启后会被重置为「开」。
+如果要做规则镜像的持久化开关，需要先改掉这里。
 
-### 5. `tvModule` 里的 `route(...)` / `module(...)` 是惰性声明
+### 6. `tvModule` 里的 `route(...)` / `module(...)` 是惰性声明
 既然路由由 `tvOnGenerateRoute` 接管，这些声明是死代码（保留仅为兼容、不影响运行）。
 若将来切回 flutter_modular 路由，需要重新评估。
 
@@ -191,7 +278,7 @@ bool _handleGlobalKeyEvent(KeyEvent event) {
    git push origin master
    ```
 
-2. **打 tag 触发 CI 构建**：
+2. **打 tag 触发 CI 构建**（`tv-build-35` 若已用过就顺延）：
    ```bash
    git tag tv-build-35
    git push origin tv-build-35
@@ -219,14 +306,25 @@ bool _handleGlobalKeyEvent(KeyEvent event) {
 
 按优先级：
 
-1. **点番剧卡片 → 能否进入详情页**（最核心）
+1. **设置 → 规则仓库 → 插件商店 → 安装 1~2 条规则**（本次新增，最核心）
+   - 预期：列表出现 16 条规则，可聚焦，按 OK 能安装并提示「导入成功」
+   - 若列表加载失败：点「启用规则镜像」再试（`raw.githubusercontent.com` 国内常不通）
+   - 若点了没反应：检查 `TVPluginShopPage` 的 `_toolNodes` / `_RuleCard._actionFocusNode`
+     的焦点链（左右键能否从卡片走到「安装」按钮）
+
+2. **安装规则后 → 返回 → 重回详情页 → 能否搜到结果**
+   - 路径必须先退出详情页（详情页 -> back -> 设置 -> 规则仓库 -> 安装 -> back -> 重进详情页），
+     因为 `TVInfoPage.initState` 只在首次构建时跑一次 `queryAllSource`
+   - 预期日志：`PluginSearchService: no results for xxx` 减少，
+     出现 `VideoPageController: resolved video URL: ...`
+
+3. **点番剧卡片 → 能否进入详情页**（上次已通过 ✅，回归确认）
    - 预期日志：`TV: _handleBangumiTap called for item <id>`
-   - 若仍失败：看是否有 `TV: Modular.pushNamed(...) ignored - navigator is null`
-     （说明首帧回调没绑定上，需要改成 `WidgetsBinding.instance.addPostFrameCallback` 重试）
-2. **详情页 → 选源播放 → 能否进入播放器**
+
+4. **详情页 → 选源播放 → 能否进入播放器**
    - 若报 "PlayerController not registered"，检查 `tvModule` 里
      `addSingleton(PlayerController.new)` 的位置与 `AudioController` 的注册顺序。
-3. **按 `D` 键 / 设置→关于→开发者菜单 → 能否打开开发者菜单**
-4. **开发者菜单里逐条跳转是否都正常**
-5. **设置 → 插件列表 → 插件商店**（`/settings/plugin/shop`）
-6. 返回键行为：主界面弹「退出应用」；详情页/播放器正常出栈
+
+5. **按 `D` 键 / 设置→关于→开发者菜单 → 能否打开开发者菜单**
+
+6. 返回键行为：主界面弹「退出应用」；详情页 / 播放器 / 规则仓库正常出栈
