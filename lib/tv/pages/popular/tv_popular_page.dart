@@ -346,6 +346,7 @@ class _TVPopularPageState extends State<TVPopularPage> {
       onFocusChange: (hasFocus) => setState(() {}),
       child: TVBangumiCard(
         bangumiItem: item,
+        focusNode: node,
         isFocused: node.hasFocus,
         onSelect: () => _handleBangumiTap(item),
       ),
