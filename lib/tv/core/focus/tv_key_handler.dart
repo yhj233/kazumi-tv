@@ -41,7 +41,7 @@ class TvKeyHandler {
       return onRight != null ? onRight() : KeyEventResult.ignored;
     }
 
-    if (key == LogicalKeyboardKey.enter) {
+    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.space) {
       return onEnter != null ? onEnter() : KeyEventResult.ignored;
     }
 
@@ -91,8 +91,8 @@ class TvKeyHandler {
       return onRight != null ? onRight() : KeyEventResult.ignored;
     }
 
-    // Enter/Select 不处理 KeyRepeatEvent
-    if (key == LogicalKeyboardKey.enter) {
+    // Enter/Select/Space 不处理 KeyRepeatEvent
+    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.space) {
       if (event is KeyRepeatEvent) {
         return KeyEventResult.ignored;
       }

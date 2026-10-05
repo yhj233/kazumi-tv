@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:kazumi/tv/pages/search/tv_search_page.dart';
 import 'package:kazumi/tv/pages/settings/tv_settings_page.dart';
+import 'package:kazumi/tv/pages/developer/tv_developer_page.dart';
 import 'package:kazumi/tv/utils/modular_compat.dart';
 import '../../core/utils/tv_constants.dart';
 import '../../tv_app.dart';
@@ -95,10 +96,23 @@ class _TVMainPageState extends State<TVMainPage> {
     _menuKey.currentState?.requestMenuFocus();
   }
 
+  void _handleDeveloperMenuKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.keyD) {
+        Modular.to.pushNamed('/developer');
+        return KeyEventResult.handled;
+      }
+    }
+    return KeyEventResult.ignored;
+  }
+
   @override
   Widget build(BuildContext context) {
     debugPrint('TVMainPage.build called');
-    return PopScope(
+    return Focus(
+      focusNode: _menuFocusNode,
+      onKeyEvent: _handleDeveloperMenuKey,
+      child: PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
@@ -155,6 +169,7 @@ class _TVMainPageState extends State<TVMainPage> {
           ],
         ),
       ),
+    ),
     );
   }
 }

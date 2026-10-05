@@ -10,6 +10,7 @@ import 'package:kazumi/repositories/search_history_repository.dart';
 import 'package:kazumi/services/shaders/shader_asset_service.dart';
 import 'package:kazumi/services/download/download_manager.dart';
 import 'package:kazumi/tv/pages/main/tv_main_page.dart';
+import 'package:kazumi/tv/pages/developer/tv_developer_page.dart';
 import 'package:kazumi/tv/pages/settings/tv_settings_module.dart';
 import 'package:kazumi/tv/pages/collect/tv_collect_module.dart';
 import 'package:kazumi/tv/pages/info/tv_info_module.dart';
@@ -37,6 +38,12 @@ final tvModule = createModule(
       ..route(
         '/',
         child: (context, state) => TVMainPage(),
+        transition: TransitionType.none,
+      )
+      // 开发者菜单
+      ..route(
+        '/developer',
+        child: (context, state) => TVDeveloperPage(),
         transition: TransitionType.none,
       )
       // 不需要依赖的 singleton
