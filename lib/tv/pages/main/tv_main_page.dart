@@ -41,13 +41,27 @@ class _TVMainPageState extends State<TVMainPage> {
     // 初始化 TV 环境（屏幕方向、焦点策略等）
     initTVEnvironment();
     // 等待 ModularApp 构建完成后设置 Modular.to
-    Future.delayed(const Duration(milliseconds: 200)).then((_) {
+    _initNavigator();
+  }
+
+  void _initNavigator() {
+    Future.delayed(const Duration(milliseconds: 1000)).then((_) {
       final navState = Modular.navigatorKey?.currentState;
       if (navState != null) {
         Modular.setNavigator(navState);
         debugPrint('TV: TVMainPage set Modular.to to ModularApp navigator');
       } else {
-        debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null!');
+        debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null after 1000ms!');
+        // 重试
+        Future.delayed(const Duration(milliseconds: 1000)).then((_) {
+          final navState2 = Modular.navigatorKey?.currentState;
+          if (navState2 != null) {
+            Modular.setNavigator(navState2);
+            debugPrint('TV: TVMainPage set Modular.to on second try');
+          } else {
+            debugPrint('TV: TVMainPage Modular.navigatorKey.currentState is null after 2000ms!');
+          }
+        });
       }
     });
   }
