@@ -86,12 +86,14 @@ class _TVMainPageState extends State<TVMainPage> {
     _menuKey.currentState?.requestMenuFocus();
   }
 
-  void _handleDeveloperMenuKey(RawKeyEvent event) {
-    if (event is RawKeyDownEvent) {
+  KeyEventResult _handleDeveloperMenuKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent) {
       if (event.logicalKey == LogicalKeyboardKey.keyD) {
         Modular.to.pushNamed('/developer');
+        return KeyEventResult.handled;
       }
     }
+    return KeyEventResult.ignored;
   }
 
   @override
@@ -99,8 +101,9 @@ class _TVMainPageState extends State<TVMainPage> {
     // 从 BuildContext 获取 Navigator
     final navState = Navigator.of(context);
     Modular.setNavigator(navState);
-    return RawKeyboardListener(
-      onKey: _handleDeveloperMenuKey,
+    return KeyboardListener(
+      focusNode: _menuFocusNode,
+      onKeyEvent: _handleDeveloperMenuKey,
       child: PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
