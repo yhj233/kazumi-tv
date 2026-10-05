@@ -10,8 +10,11 @@ import 'tv_player_controls.dart';
 import 'tv_episode_menu.dart';
 import 'tv_progress_indicator.dart';
 import 'package:kazumi/pages/player/player_controller.dart';
+import 'package:kazumi/pages/player/controller/player_danmaku_controller.dart';
 import 'package:kazumi/pages/video/video_controller.dart';
 import 'package:kazumi/pages/history/history_controller.dart';
+import 'package:kazumi/pages/my/my_controller.dart';
+import 'package:kazumi/modules/danmaku/danmaku_module.dart';
 import 'package:kazumi/pages/player/player_item_surface.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:kazumi/tv/utils/modular_compat.dart';
@@ -34,9 +37,14 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
   final VideoPageController videoPageController =
       Modular.get<VideoPageController>();
   final HistoryController _historyController = Modular.get<HistoryController>();
+  final MyController _myController = Modular.get<MyController>();
   final FocusNode _pageFocusNode = FocusNode();
   final FocusNode _controlsFocusNode = FocusNode();
   final _danmuKey = GlobalKey();
+
+  /// 每秒同步一次播放器状态 / 发射弹幕。
+  /// 上游在 `player_item.dart` 的 `getPlayerTimer()` 里做同样的两件事。
+  Timer? _playerStateTimer;
 
   late bool _border;
   late double _opacity;
@@ -118,6 +126,103 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
         }
       },
     );
+
+    // 每秒驱动一次：同步播放进度/时长（进度条）并发射弹幕。
+    // 缺了这一步会出现「进度条 0:00、无法拖动」和「弹幕不显示」。
+    _playerStateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      _syncPlayerStateAndDanmaku();
+    });
+  }
+
+  /// 同步播放器状态 + 按当前播放位置发射弹幕。
+  ///
+  /// 对应上游 `player_item.dart` 的
+  /// `getPlayerTimer()` → `syncPlaybackState()` + `_emitDanmakusForCurrentPosition()`。
+  void _syncPlayerStateAndDanmaku() {
+    try {
+      // playback.duration / currentPosition 是 @observable 字段，
+      // 只有这个调用会把 media_kit 的实时状态写进去。
+      // TV 端原来从未调用过，所以总时长恒为 Duration.zero、seek 被 clamp 回 0。
+      playerController.syncPlaybackState();
+    } catch (e) {
+      KazumiLogger().w('TVPlayerPage: failed to sync playback state', error: e);
+    }
+    _emitDanmakusForCurrentPosition();
+  }
+
+  bool _isDanmakuSourceEnabled(DanmakuEntry danmaku) {
+    if (!_danmakuBiliBiliSource && danmaku.source.contains('BiliBili')) {
+      return false;
+    }
+    if (!_danmakuGamerSource && danmaku.source.contains('Gamer')) {
+      return false;
+    }
+    if (!_danmakuDanDanSource &&
+        !(danmaku.source.contains('BiliBili') ||
+            danmaku.source.contains('Gamer'))) {
+      return false;
+    }
+    return true;
+  }
+
+  DanmakuItemType _danmakuItemType(DanmakuEntry danmaku) {
+    if (danmaku.type == 4) {
+      return DanmakuItemType.bottom;
+    }
+    if (danmaku.type == 5) {
+      return DanmakuItemType.top;
+    }
+    return DanmakuItemType.scroll;
+  }
+
+  /// 把「当前播放秒数」对应的弹幕推到画布上。
+  ///
+  /// TV 端此前完全没有移植这段逻辑（`canvasController` 只被赋值、从没被写入），
+  /// 所以即使弹幕数据拉取成功也不会显示。
+  void _emitDanmakusForCurrentPosition() {
+    if (playerController.playback.currentPosition.inMicroseconds == 0 ||
+        playerController.playback.playerPlaying != true ||
+        playerController.danmaku.danmakuOn != true) {
+      return;
+    }
+
+    final List<DanmakuEntry> danmakus = playerController.danmaku
+        .danmakusForPlaybackPosition(playerController.playback.currentPosition);
+    final int danmakuCount = danmakus.length;
+    for (final entry in danmakus.asMap().entries) {
+      final int idx = entry.key;
+      final DanmakuEntry danmaku = entry.value;
+      if (!_isDanmakuSourceEnabled(danmaku)) {
+        continue;
+      }
+
+      final Color color = _danmakuColor ? danmaku.color : Colors.white;
+      final int delay = DanmakuTimeline.staggerDelayMilliseconds(
+        index: idx,
+        total: danmakuCount,
+      );
+      final int scheduledDanmakuGeneration =
+          playerController.danmaku.scheduledDanmakuGeneration;
+      Future.delayed(Duration(milliseconds: delay), () {
+        if (!mounted ||
+            !playerController.playback.playerPlaying ||
+            playerController.playback.playerBuffering ||
+            !playerController.danmaku.danmakuOn ||
+            playerController.danmaku.scheduledDanmakuGeneration !=
+                scheduledDanmakuGeneration ||
+            _myController.isDanmakuBlocked(danmaku.message)) {
+          return;
+        }
+        playerController.danmaku.canvasController.addDanmaku(
+          DanmakuContentItem(
+            danmaku.message,
+            color: color,
+            type: _danmakuItemType(danmaku),
+          ),
+        );
+      });
+    }
   }
 
   /// 开始播放。
@@ -165,6 +270,8 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
 
   @override
   void dispose() {
+    _playerStateTimer?.cancel();
+    _playerStateTimer = null;
     _completionReaction?.call();
     _completionReaction = null;
     _controlsHideTimer?.cancel();
@@ -313,7 +420,10 @@ class _TVPlayerPageState extends State<TVPlayerPage> {
 
   void _doSeekStep() {
     final currentPosition = playerController.playback.playerPosition;
-    final duration = playerController.playback.duration;
+    // 用 playerDuration（实时读 media_kit 状态）而不是 @observable duration：
+    // 后者依赖每秒一次的 syncPlaybackState，在首帧之前还是 zero，
+    // 会导致「按前进反而跳回开头」。
+    final duration = playerController.playback.playerDuration;
     final offset = Duration(seconds: _seekStep);
 
     Duration newPosition;

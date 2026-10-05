@@ -6,6 +6,7 @@ import 'package:kazumi/pages/download/download_controller.dart';
 import 'package:kazumi/request/apis/danmaku_api.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/storage/storage.dart';
+import 'package:kazumi/utils/dandan_credentials.dart';
 import 'package:mobx/mobx.dart';
 import 'package:kazumi/utils/danmaku.dart';
 
@@ -269,6 +270,15 @@ abstract class _PlayerDanmakuController with Store {
 
   Future<DanmakuLoadResult> _fetchDanDanmakuByBgmBangumiID(
       int bgmBangumiID, int episode) async {
+    if (!hasDandanCredentials) {
+      // 明确指向构建配置，而不是让用户以为是「服务器异常」。
+      KazumiLogger().e(
+        'PlayerController: DanDanPlay 弹幕不可用 —— 构建时缺少 '
+        'DANDANAPI_APPID/DANDANAPI_KEY（DanDanPlay 会返回 403）。'
+        '请在仓库 Secrets 中配置后重新构建。',
+      );
+      return DanmakuLoadResult.failed(bangumiID: bangumiID);
+    }
     KazumiLogger().i(
         'PlayerController: attempting to get danmaku [BgmBangumiID] $bgmBangumiID');
     var nextBangumiID = bangumiID;

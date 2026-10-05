@@ -197,7 +197,9 @@ class _TVPlayerControlsState extends State<TVPlayerControls>
                     padding: const EdgeInsets.symmetric(horizontal: 24),
                     child: ProgressBar(
                       progress: widget.playerController.playback.playerPosition,
-                      total: widget.playerController.playback.duration,
+                      // 实时 getter：@observable duration 只有 syncPlaybackState()
+                      // 才会更新，用错会一直显示 0:00
+                      total: widget.playerController.playback.playerDuration,
                       progressBarColor: TVConstants.focusColor,
                       baseBarColor: Colors.white24,
                       thumbColor: TVConstants.focusColor,

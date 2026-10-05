@@ -46,6 +46,26 @@ class _TVSearchResultSectionState extends State<TVSearchResultSection> {
   Timer? _captchaVerifyTimer;
   final Map<String, List<FocusNode>> _pluginResultFocusNodes = {};
 
+  /// 各源的第一条目对应的焦点节点，用于挑出「最靠前分组的第一条」。
+  final Map<String, FocusNode> _firstNodeByPlugin = {};
+
+  /// 当前渲染顺序的分组（与列表展示顺序一致）。
+  List<Plugin> _visiblePlugins = const [];
+
+  /// 选出**最靠前分组**的第一条目并上报。
+  ///
+  /// 之前是「哪个源先搜完就锁定哪个」，顺序不确定，
+  /// 于是加载完后选中的条目位置飘忽（常常落在后面）。
+  void _reportFirstFocusNode() {
+    for (final plugin in _visiblePlugins) {
+      final node = _firstNodeByPlugin[plugin.name];
+      if (node != null) {
+        widget.onFirstFocusNodeReady?.call(node);
+        return;
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +93,7 @@ class _TVSearchResultSectionState extends State<TVSearchResultSection> {
       }
     }
     _pluginResultFocusNodes.clear();
+    _firstNodeByPlugin.clear();
     super.dispose();
   }
 
@@ -162,6 +183,8 @@ class _TVSearchResultSectionState extends State<TVSearchResultSection> {
         ),
       );
     }
+
+    _visiblePlugins = visiblePlugins;
 
     return ListView.builder(
       itemCount: visiblePlugins.length,
@@ -363,7 +386,8 @@ class _TVSearchResultSectionState extends State<TVSearchResultSection> {
     }
 
     if (focusNodes.isNotEmpty) {
-      widget.onFirstFocusNodeReady?.call(focusNodes[0]);
+      _firstNodeByPlugin[plugin.name] = focusNodes[0];
+      _reportFirstFocusNode();
     }
 
     return Column(

@@ -10,6 +10,7 @@ import 'package:kazumi/services/network/ech_http_licenses.dart';
 import 'package:kazumi/services/network/proxy_manager.dart';
 import 'package:kazumi/services/platform/webview_feature_service.dart';
 import 'package:kazumi/services/logging/logger.dart';
+import 'package:kazumi/navigation.dart';
 import 'package:kazumi/tv/core/navigation/tv_routes.dart';
 import 'package:kazumi/tv/core/utils/tv_constants.dart';
 import 'package:kazumi/tv/pages/main/tv_main_page.dart';
@@ -99,6 +100,10 @@ class _TVRootAppState extends State<TVRootApp> {
       title: 'Kazumi TV',
       debugShowCheckedModeBanner: false,
       navigatorKey: tvNavigatorKey,
+      // KazumiDialog.showToast 在没有 context 时会回退到 rootScaffoldMessengerKey，
+      // 不挂上这个 key 的话所有 toast 都会被静默丢弃
+      // （日志表现为 "No ScaffoldMessenger available to show Toast"）。
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
       onGenerateRoute: tvOnGenerateRoute,
       theme: ThemeData(
         useMaterial3: true,

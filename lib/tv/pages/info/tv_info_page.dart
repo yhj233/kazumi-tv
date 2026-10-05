@@ -39,7 +39,6 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
   final FocusNode _pageFocusNode = FocusNode(debugLabel: 'info_page');
   final FocusNode _collectFocusNode = FocusNode(debugLabel: 'collect_btn');
   FocusNode? _rightPanelFirstFocusNode;
-  bool _firstFocusNodeSet = false;
 
   static const double _scrollStep = 100.0;
 
@@ -124,10 +123,10 @@ class _TVInfoPageState extends State<TVInfoPage> with TickerProviderStateMixin {
   }
 
   void _onFirstFocusNodeReady(FocusNode node) {
-    if (!_firstFocusNodeSet) {
-      _rightPanelFirstFocusNode = node;
-      _firstFocusNodeSet = true;
-    }
+    // 始终接受「最靠前分组的第一条」。
+    // 旧实现用 `_firstFocusNodeSet` 只认第一次回调——而各源搜索完成顺序不定，
+    // 导致详情页加载完后选中的条目每次都可能不同（常常落在靠后的位置）。
+    _rightPanelFirstFocusNode = node;
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
