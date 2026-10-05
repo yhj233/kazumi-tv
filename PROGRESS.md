@@ -48,13 +48,16 @@
 5. **D 键打开开发者菜单**:
    - 使用 `KeyboardListener`（替代已弃用的 `RawKeyboardListener`）
    - 回调签名: `void Function(KeyEvent)`
-   - **注意**: `KeyboardListener` 的 `focusNode` 需要获得焦点才能接收事件
+   - **状态**: D 键无效，`focusNode` 需要获得焦点才能接收事件
+   - **待修复**: 需要换用其他更好的打开方式
 
 ## 主要未解决问题
 
-### 1. `Modular.to` 为 null（核心问题）
+### 1. `Modular.to` 为 null（核心问题 — 详情页无法进入的元凶）
 
 **现象**: 点击番剧卡片时，`Modular.to` 抛出 `Null check operator used on a null value`。
+
+**确认**: 这是导致详情页无法进入的根本原因。`_handleBangumiTap` 调用 `Modular.to.pushNamed('/info/')` 时，`Modular.to` 为 null，导致导航失败。
 
 **已尝试的方案（全部失败）**:
 - `scheduleMicrotask` after `runApp` → `tvNavigatorKey.currentState` 为 null
@@ -86,45 +89,44 @@ Modular.setNavigator(navState);
 - `tv_info_page.dart:232`
 - `tv_collect_page.dart:107`
 
-### 2. D 键打开开发者菜单
+### 2. D 键打开开发者菜单（无效）
 
 **现象**: 按 D 键无法打开开发者菜单。
 
-**已尝试的方案**:
+**已尝试的方案（全部失败）**:
 - `Focus` + `onKeyEvent` → 只在 focus 时接收事件
 - `RawKeyboardListener` + `focusNode` → 需要 focus
 - `RawKeyboardListener` 无 `focusNode` → 编译错误（`focusNode` 是必填参数）
 - `KeyboardListener` + `focusNode` → 编译通过，但 `focusNode` 需要获得焦点
 
-**当前方案（commit `8f49b22`）**:
-```dart
-return KeyboardListener(
-  focusNode: _menuFocusNode,
-  onKeyEvent: _handleDeveloperMenuKey,
-  child: PopScope(...),
-);
-```
+**问题**: 所有基于 `Focus` 的方案都要求 `focusNode` 获得焦点，但焦点在内容页上。
 
-**问题**: `_menuFocusNode` 可能没有焦点，导致 D 键事件不被接收。
+**推荐的解决方案**:
+- **使用 `HardwareKeyboard` 全局监听**（不需要 focus，在 `initState` 中注册）
+  ```dart
+  // 在 initState 中
+  HardwareKeyboard.instance.addHandler(_onKeyEvent);
+  
+  void _onKeyEvent(KeyEvent event) {
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.keyD) {
+      Modular.to.pushNamed('/developer');
+    }
+  }
+  
+  // 在 dispose 中
+  HardwareKeyboard.instance.removeHandler(_onKeyEvent);
+  ```
+- 或使用 `Focus` + `autofocus: true` 确保 `_menuFocusNode` 获得焦点（但会干扰内容页焦点）
 
-**可能的解决方案**:
-- 使用 `Focus` + `autofocus: true` 确保 `_menuFocusNode` 获得焦点
-- 使用 `FocusTraversalGroup` 确保 wrapper 有焦点
-- 使用 `HardwareKeyboard` 全局监听（不需要 focus）
+### 3. 鼠标点击改变焦点（已验证）
 
-### 3. 鼠标点击不改变焦点（框选）
-
-**现象**: 鼠标点击番剧卡片不改变焦点（框选）。
+**状态**: ✅ 已验证 — 鼠标点击番剧卡片可以改变焦点（框选）
 
 **已确认**:
 - `TVBangumiCard` 的 `onTap` 被调用（logcat 确认）
 - `_handleBangumiTap` 被触发（logcat 确认）
 - `HitTestBehavior.opaque` 已设置
 - `focusNode?.requestFocus()` 在 `onTap` 中调用
-
-**可能原因**:
-- `focusNode` 可能为 null（在 unfocused 分支中）
-- 焦点系统可能有其他问题
 
 ### 4. 键盘 Enter/Select/Space 无法进入详情页
 
