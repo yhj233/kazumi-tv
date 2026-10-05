@@ -141,9 +141,9 @@ Future<void> initTVEnvironment() async {
   // 设置 TV 默认配置
   await GStorage.putSetting(SettingsKeys.autoPlayNext, true);
   await GStorage.putSetting(SettingsKeys.playResume, true);
-  await GStorage.putSetting(SettingsKeys.danmakuBiliBiliSource, true);
-  await GStorage.putSetting(SettingsKeys.danmakuGamerSource, true);
-  await GStorage.putSetting(SettingsKeys.danmakuDanDanSource, true);
+  // 注意：这里**不要**再强制写 danmakuBiliBiliSource / danmakuGamerSource /
+  // danmakuDanDanSource —— 它们已经暴露在「设置 → 弹幕设置 → 弹幕来源」，
+  // 每次启动覆盖会让用户改动失效（三者默认值本来就是 true）。
   await GStorage.putSetting(SettingsKeys.defaultStartupPage, '/tab/popular/');
   await GStorage.putSetting(SettingsKeys.enableGitProxy, true);
 
