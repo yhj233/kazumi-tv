@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/storage/settings_keys.dart';
+import 'package:kazumi/services/danmaku/danmaku_provider.dart';
 import 'package:kazumi/utils/dandan_credentials.dart';
 import 'package:kazumi/tv/pages/settings/widgets/tv_settings_group_header.dart';
 import 'package:kazumi/tv/pages/settings/widgets/tv_settings_toggle_row.dart';
 import 'package:kazumi/tv/pages/settings/widgets/tv_settings_slider_row.dart';
+import 'package:kazumi/tv/pages/settings/widgets/tv_settings_dropdown_row.dart';
 
 class TVDanmakuSettingsPage extends StatefulWidget {
   final FocusNode? firstItemFocusNode;
@@ -45,6 +47,9 @@ class _TVDanmakuSettingsPageState extends State<TVDanmakuSettingsPage> {
   late bool danmakuMassive;
   late bool danmakuFollowSpeed;
 
+  /// 弹幕数据源
+  late DanmakuProvider danmakuProvider;
+
   @override
   void initState() {
     super.initState();
@@ -66,6 +71,14 @@ class _TVDanmakuSettingsPageState extends State<TVDanmakuSettingsPage> {
         GStorage.getSetting(SettingsKeys.danmakuDeduplication);
     danmakuMassive = GStorage.getSetting(SettingsKeys.danmakuMassive);
     danmakuFollowSpeed = GStorage.getSetting(SettingsKeys.danmakuFollowSpeed);
+    danmakuProvider = DanmakuProvider.current;
+  }
+
+  void updateDanmakuProvider(DanmakuProvider value) {
+    GStorage.putSetting(SettingsKeys.danmakuProvider, value.storageValue);
+    setState(() {
+      danmakuProvider = value;
+    });
   }
 
   void updateDanmakuEnabled(bool value) {
@@ -173,61 +186,83 @@ class _TVDanmakuSettingsPageState extends State<TVDanmakuSettingsPage> {
     });
   }
 
-  /// 弹幕服务状态提示。
+  /// 弹幕来源状态提示。
   ///
-  /// DanDanPlay 是本项目**唯一的**弹幕数据来源（它自己聚合了 B站 / 巴哈姆特 /
-  /// 弹弹play 三方弹幕）。它的接口需要 `X-AppId` + `X-Signature` 签名，
-  /// 密钥由 CI 通过 `--dart-define=DANDANAPI_APPID/KEY` 注入。
-  ///
-  /// 自行构建 / fork 构建（仓库里没有这两个 secret）时密钥为空串，
-  /// 接口会直接返回 **403**，表现就是「播放正常但一条弹幕都没有」，
-  /// 而界面上完全看不出原因 —— 所以这里明确显示出来。
+  /// - 用 B站直连：不需要任何密钥，直接可用（提示匹配可能不准）
+  /// - 用 DanDanPlay：需要构建时注入 `DANDANAPI_APPID/KEY`，
+  ///   而 DanDanPlay 自 2025-01 起强制应用认证（需人工审核），
+  ///   所以未配置时这里会明确建议改回「自动」或「B站直连」。
   Widget _buildServiceNotice() {
-    final bool ready = hasDandanCredentials;
-    final Color accent = ready ? const Color(0xFF4CAF50) : const Color(0xFFFF9800);
+    final DanmakuProvider selected = danmakuProvider;
+    final DanmakuProvider effective = selected.resolved;
 
+    if (effective == DanmakuProvider.bilibili) {
+      final bool autoSwitched = selected == DanmakuProvider.auto;
+      return _notice(
+        color: const Color(0xFF4CAF50),
+        icon: Icons.check_circle_outline_rounded,
+        title: '弹幕来源：B站直连${autoSwitched ? '（自动选择）' : ''}',
+        body: autoSwitched
+            ? '未检测到 DanDanPlay 应用凭据，已自动改用 B站直连 —— 不需要任何密钥。\n'
+                  '注意：B站来源是按「番剧名 + 集数序号」匹配的，多季番剧 / 剧场版 / '
+                  '集数错位时可能对不上，可在播放中用「时间轴偏移」微调，或切换上面的数据源。'
+            : 'B站直连不需要任何密钥。\n'
+                  '注意：按「番剧名 + 集数序号」匹配，多季番剧 / 剧场版可能对不上。',
+      );
+    }
+
+    final bool ready = hasDandanCredentials;
+    return _notice(
+      color: ready ? const Color(0xFF4CAF50) : const Color(0xFFFF9800),
+      icon: ready
+          ? Icons.check_circle_outline_rounded
+          : Icons.warning_amber_rounded,
+      title: ready
+          ? '弹幕来源：DanDanPlay'
+          : '弹幕来源：DanDanPlay —— 未配置凭据，不会有弹幕',
+      body: ready
+          ? '已注入 DanDanPlay 应用凭据，可一次拿到 B站 / 巴哈姆特 / 弹弹play 三方弹幕。'
+          : 'DanDanPlay 自 2025-01 起强制应用认证：需要在 DevCenter 注册账号并通过'
+                '人工审核才能拿到 AppId，当前构建没有注入 DANDANAPI_APPID / '
+                'DANDANAPI_KEY，接口会返回 403。\n'
+                '建议把下面的「弹幕数据源」改成「自动」或「B站直连」，就不需要任何密钥了。',
+    );
+  }
+
+  Widget _notice({
+    required Color color,
+    required IconData icon,
+    required String title,
+    required String body,
+  }) {
     return Container(
       margin: const EdgeInsets.fromLTRB(40, 12, 40, 4),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.10),
+        color: color.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: accent.withValues(alpha: 0.50)),
+        border: Border.all(color: color.withValues(alpha: 0.50)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            ready
-                ? Icons.check_circle_outline_rounded
-                : Icons.warning_amber_rounded,
-            color: accent,
-            size: 22,
-          ),
+          Icon(icon, color: color, size: 22),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  ready ? '弹幕服务已配置' : '弹幕服务未配置（当前不会有任何弹幕）',
+                  title,
                   style: TextStyle(
-                    color: accent,
+                    color: color,
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  ready
-                      ? '已注入 DanDanPlay 应用凭据，播放时会自动拉取弹幕。'
-                      : '构建时没有注入 DanDanPlay 应用凭据，弹幕接口会返回 403。\n'
-                          '修复：到 doc.dandanplay.com 注册一个开发者应用，把 '
-                          'DANDANAPI_APPID / DANDANAPI_KEY 加到本仓库的 '
-                          'Settings → Secrets and variables → Actions，'
-                          '再重新打 tag 构建即可。\n'
-                          '（DanDanPlay 聚合 B站 / 巴哈姆特 / 弹弹play 三方弹幕，'
-                          '是当前唯一的数据来源；下面的「弹幕来源」只是从中做筛选。）',
+                  body,
                   style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 13,
@@ -248,15 +283,30 @@ class _TVDanmakuSettingsPageState extends State<TVDanmakuSettingsPage> {
       padding: const EdgeInsets.symmetric(vertical: 20),
       children: [
         _buildServiceNotice(),
+        const TVSettingsGroupHeader(title: '弹幕数据源'),
+        TVSettingsDropdownRow<DanmakuProvider>(
+          label: '数据源',
+          subtitle: danmakuProviderSubtitle(danmakuProvider),
+          value: danmakuProvider,
+          items: DanmakuProvider.selectable,
+          itemLabel: (provider) => provider.label,
+          onChanged: (value) {
+            if (value != null) {
+              updateDanmakuProvider(value);
+            }
+          },
+          isFirst: true,
+          focusNode: widget.firstItemFocusNode,
+          onMoveUp: widget.onExitUp,
+          onMoveLeft: widget.onExitLeft,
+          sidebarFocusNode: widget.sidebarFocusNode,
+        ),
         const TVSettingsGroupHeader(title: '弹幕设置'),
         TVSettingsToggleRow(
           label: '弹幕开关',
           subtitle: '开启或关闭弹幕显示',
           value: danmakuEnabled,
           onChanged: updateDanmakuEnabled,
-          isFirst: true,
-          focusNode: widget.firstItemFocusNode,
-          onMoveUp: widget.onExitUp,
           onMoveLeft: widget.onExitLeft,
           sidebarFocusNode: widget.sidebarFocusNode,
         ),

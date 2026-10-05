@@ -3,7 +3,9 @@
 import 'package:canvas_danmaku/canvas_danmaku.dart' as canvas;
 import 'package:kazumi/modules/danmaku/danmaku_module.dart';
 import 'package:kazumi/pages/download/download_controller.dart';
+import 'package:kazumi/request/apis/bilibili_danmaku_api.dart';
 import 'package:kazumi/request/apis/danmaku_api.dart';
+import 'package:kazumi/services/danmaku/danmaku_provider.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/utils/dandan_credentials.dart';
@@ -140,8 +142,9 @@ abstract class _PlayerDanmakuController with Store {
   Future<DanmakuLoadResult> fetchDanmaku(
     int bangumiId,
     String pluginName,
-    int episode,
-  ) async {
+    int episode, {
+    String? bangumiName,
+  }) async {
     if (isLocalPlayback()) {
       return await _fetchCachedDanmaku(
         bangumiId,
@@ -149,6 +152,31 @@ abstract class _PlayerDanmakuController with Store {
         episode,
       );
     }
+
+    // 数据源路由：auto 在缺少 DanDanPlay 凭据时自动改用 B 站直连，
+    // 因为那种情况下 DanDanPlay 接口必定 403（等于没有弹幕）。
+    final DanmakuProvider provider = DanmakuProvider.current.resolved;
+    if (provider == DanmakuProvider.bilibili) {
+      final String keyword = (bangumiName ?? '').trim();
+      if (keyword.isEmpty) {
+        KazumiLogger().w(
+          'PlayerController: B站弹幕需要番剧名，但调用方没有传入，'
+          '回退到 DanDanPlay',
+        );
+      } else {
+        KazumiLogger().i('PlayerController: using BiliBili danmaku for "$keyword" episode $episode');
+        final List<DanmakuEntry> entries =
+            await BilibiliDanmakuApi.byNameAndEpisode(keyword, episode);
+        if (entries.isEmpty) {
+          return DanmakuLoadResult.failed(bangumiID: bangumiId);
+        }
+        return DanmakuLoadResult.success(
+          danmakus: entries,
+          bangumiID: bangumiId,
+        );
+      }
+    }
+
     return await _fetchDanDanmakuByBgmBangumiID(
       bangumiId,
       episode,

@@ -198,6 +198,20 @@ class SettingsKeys {
     true,
     group: SettingGroup.danmaku,
   );
+
+  /// 弹幕数据源。
+  ///
+  /// - `''`        自动：有 DanDanPlay 凭据就用 DanDanPlay，否则用 B 站
+  /// - `'dandanplay'` 强制 DanDanPlay（需要构建时注入 DANDANAPI_APPID/KEY）
+  /// - `'bilibili'`   强制 B 站直连（不需要任何密钥）
+  ///
+  /// 之所以要有 B 站这个选项：DanDanPlay 自 2025-01 起强制应用认证，
+  /// 需要在 DevCenter 注册账号并**人工审核**才能拿到 AppId，对个人 fork 不现实。
+  static const danmakuProvider = SettingKey<String>(
+    'danmakuProvider',
+    '',
+    group: SettingGroup.danmaku,
+  );
   static const danmakuFontWeight = SettingKey<int>(
     _SettingBoxKey.danmakuFontWeight,
     4,
@@ -592,6 +606,7 @@ class SettingsKeys {
     danmakuDanDanSource,
     danmakuFontWeight,
     danmakuFollowSpeed,
+    danmakuProvider,
     themeMode,
     themeColor,
     privateMode,

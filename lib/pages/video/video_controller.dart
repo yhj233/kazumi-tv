@@ -550,6 +550,8 @@ abstract class _VideoPageController with Store implements Disposable {
         params.bangumiId,
         params.pluginName,
         params.danmakuEpisodeNumber,
+        // B站直连来源需要番剧名来检索 season
+        bangumiName: params.bangumiName,
       );
       if (session.isActive && danmakuSession.isActive) {
         if (result.hasDanmakus) {
