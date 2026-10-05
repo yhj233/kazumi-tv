@@ -96,7 +96,7 @@ class _TVMainPageState extends State<TVMainPage> {
     _menuKey.currentState?.requestMenuFocus();
   }
 
-  void _handleDeveloperMenuKey(FocusNode node, KeyEvent event) {
+  KeyEventResult _handleDeveloperMenuKey(FocusNode node, KeyEvent event) {
     if (event is KeyDownEvent) {
       if (event.logicalKey == LogicalKeyboardKey.keyD) {
         Modular.to.pushNamed('/developer');
