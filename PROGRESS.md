@@ -664,3 +664,115 @@ adb logcat -c && adb logcat > tv9.log      # 抓「未过滤」日志
 adb logcat -d | grep -E "WebViewFeature|VideoWebviewControllerFactory|\
 WebViewVideoSource|VideoPageController|WebView:"
 ```
+
+---
+
+## 🎯 安卓 9 解析失败 —— 根因确认 + 「原生直取」修复
+
+> 上一节的「诊断日志」补丁已用于实机取证，结论如下（**推翻了最初"JS 注入时机"的
+> 猜测**）。本节记录根因与已实施的修复。
+
+### 实机证据链（安卓9 盒子，插件 MXdm，页面 dcc3.com）
+
+```
+INFO  VideoWebviewControllerFactory: selected=VideoWebviewImpl | documentStartScriptSupported=false
+DEBUG WebView: Console [ERROR]: Uncaught SyntaxError: Unexpected token .
+DEBUG WebView: Console [ERROR]: Uncaught ReferenceError: Artplayer is not defined
+DEBUG WebView: loading completed            ← 13.2 秒才加载完
+DEBUG WebView: Timer scan: found 0 video element(s)
+ERROR WebViewVideoSource: TIMEOUT 15s, no video source sniffed | url=... | legacy=false
+```
+
+### 根因
+
+盒子系统 WebView 是 **Chrome 66（`com.android.webview 66.0.3359.158`）**，
+而站点加载的 **`artplayer 5.3.0` 使用了 19 处可选链 `?.` + 4 处空值合并 `??`**
+（ES2020，Chrome 80 才支持）：
+
+`SyntaxError: Unexpected token .` → `Artplayer is not defined` →
+播放器根本没创建 → 页面**永远不会产生 video、也永远不会发 m3u8 请求** →
+嗅探器无物可拦 → 15s 超时。
+
+推论：
+- 与源无关（现代站点普遍用新版播放器库）→ 解释「所有源都失败」；
+- 与网络无关（盒子 curl 实测各接口均 200、1~2.5s；且手机同 WiFi 正常）；
+- **单纯延长超时无效**（不是"来不及"，是"永远不会发生"）。
+
+> 注意：`hls.js 1.6.13` **没有**可选链（`couldBacktrack?.5:.125` 是三元表达式配
+> 小数，属正则误报），Chrome 66 可用；卡住的只有 artplayer 一个库。
+
+### 修复方案（已实施）：原生直取优先，WebView 嗅探兜底
+
+新增 `lib/services/video_source/direct_video_source_resolver.dart`：
+
+1. **直取**：直接 HTTP 拉播放页 HTML（`DioFactory.createForConfig` +
+   `NetworkConfig.fromSettings`，尊重代理设置、关闭冗余日志），正则提取
+   m3u8/mp4，并**真实请求一次候选地址校验**（m3u8 校验 `#EXTM3U` 前缀；
+   mp4 用 `Range: bytes=0-1` + `ResponseType.stream` 只取响应头，避免把整个
+   视频读进内存）。
+2. **覆盖的书写形态**：`url: '...'` / `"url":"..."` / `player_aaaa` 配置 /
+   `<source src=...>` / `//cdn/...` 协议相对 / `/vod/...` 相对路径 /
+   JSON 转义斜杠 `https:////...` / HTML 实体 `&amp;` /
+   **解析型地址（`?url=<内层媒体地址>`，含 URL 编码）**。
+3. **iframe 跟进**：页面无候选时继续拉 `<iframe src>`（≤2 个/页，
+   `useLegacyParser` 时下钻 2 层），覆盖 iframe 型规则站点。
+4. **防误伤**（重要）：
+   - 广告/统计域名与路径（`googleads`、`adposter`、`/ad/`…）过滤；
+   - **mp4 直链必须处在明确的播放器配置上下文**（得分 ≥50，
+     `_mp4MinScore`）——实测解析播放器（JX）页面里有
+     `'Kpadmp4': ".../Play/adposter.mp4"`，无上下文（仅基础分 10），
+     若不拦就会被当成正片播出广告；
+   - iframe 只认 `<iframe ... src="...">` 标签（旧解析器同样扫这个），
+     不认任意 `.src = "..."` 赋值（否则会把统计脚本当播放器）。
+5. **时间预算**：直取总预算 `min(8s, timeout×0.6)`；失败后 WebView 嗅探窗口
+   缩短为 `max(8s, timeout - 已消耗)`，保证总等待时间不劣于改动前
+   （`_minSniffTimeout`）。
+6. **失败即回退**：任何一步失败（打不开 / 没提取到 / 校验不过 / 超预算）都
+   返回 `null`，由 `WebViewVideoSourceService` 走原流程；直取内部异常一律
+   catch，绝不打断解析。
+7. **取消联动**：`_ResolveRequest` 增加 `addCancelHook`，切集/取消时中断
+   直取中正在进行的 HTTP 请求。
+
+改动文件：
+- `lib/services/video_source/direct_video_source_resolver.dart`（新增）
+- `lib/services/video_source/webview_video_source_service.dart`（接入直取 + 超时回收 + 取消联动 + dispose）
+- `lib/services/video_source/services.dart`（导出新增文件）
+
+**未改动任何解析业务逻辑**；两个调用方（播放 `video_controller.dart`、
+下载 `download_controller.dart` → `VideoSourceResolverPool`）自动受益。
+
+### 实机验证（盒子 192.168.2.186 上实测）
+
+| 项 | 结果 |
+|---|---|
+| 用代码同款请求头拉 `dcc3.com/play/20280-2-1` | 200，14KB，页面内**唯一**候选即正片 m3u8 |
+| 该 m3u8 真实请求 | 200，正文以 `#EXTM3U` 开头（通过校验） |
+| `jx.wuzhoupai.com` 解析页（AGE 源的播放器） | 仅含广告 `adposter.mp4` → **被正确拒绝（0 候选）** |
+| AGE 播放页 `agedm.io/play/...` | 页面内无媒体地址，正确产出 iframe（JX 解析页）→ 最终回退 WebView |
+
+正则与打分逻辑另用 Python 镜像在真实页面 + 10 个构造用例上验证，全部通过
+（用例脚本在仓库外的 `更新移植/verify_direct_extractor.py`）。
+
+### 已知边界（不修则回退，无回归）
+
+- 站点把地址藏在**运行时 JS 里**（如 JX 解析页 `?url=age_<加密串>`，需服务端
+  解密）→ 直取拿不到 → 回退 WebView；
+- 直取校验时会带 `Referer: <页面 origin>/`，而播放器给 mpv 的 Referer 取自
+  `plugin.referer`（内置规则多为空）→ 需要 Referer 的 CDN 仍可能播放失败。
+  这与改动前 WebView 路径的行为一致，非本次引入。
+
+### 下一次构建要重点验证
+
+装新 APK 后，一次正常播放应能看到（`files/logs/kazumi_logs.log` 或 logcat）：
+
+```
+INFO DirectVideoSource: HIT https://cdn.xxx/index.m3u8 (page=..., depth=0, 1xxxms)
+INFO WebViewVideoSource: resolved by DIRECT fetch in 1xxxms | url=...
+```
+
+若某站点直取不适用，则应看到直取未命中日志 + 原有 WebView 嗅探流程照常：
+
+```
+INFO  DirectVideoSource: no usable media url (...) -> fallback to WebView
+DEBUG WebViewVideoSource: direct fetch missed (...)  falling back to WebView sniff (window=8s)
+```
