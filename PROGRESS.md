@@ -583,3 +583,84 @@ TV 版重写成自己的播放器页面时，这些副作用**全都没有被带
    - Android 需 `WebViewFeatureService.initialize()`（`main.dart` 已调用）
    - 相关日志前缀：`[WebView]`、`WebView:`
 4. 模拟器（x86_64）上 WebView 嗅探可能不稳定，**真机（arm64）更可信**
+
+---
+
+## 🎯 安卓 9 解析失败 —— 定位与「诊断日志」补丁（未改行为逻辑）
+
+### 现象
+
+Android 9 (API 28) **32 位 ARM TV 盒子**（`nativeLibraryDirectories=[.../lib/arm]`）上，
+任意源（含新装社区规则）都提示 **「视频解析超时，请重试」**；
+同一 APK 在 Android 15（32/64 位）解析正常。用户实测**点播放到报错约 10~15 秒**。
+
+### 定位
+
+「视频解析超时」= `video_controller.dart` 的 `VideoSourceTimeoutException`，
+抛点在 `webview_video_source_service.dart` 的 `onVideoURLParser.first.timeout(15s)`
+→ **WebView 起来了、页面也加载了，但 15s 内没嗅探到任何 m3u8/mp4**。
+
+与安卓15 的差异在于嗅探路径（`VideoWebviewControllerFactory`）：
+
+| 设备 | 走向 | 注入方式 |
+|------|------|----------|
+| 安卓15 | `VideoWebviewAndroidImpl` | `addUserScripts(AT_DOCUMENT_START)`，**文档创建前**注入 ✅ |
+| 安卓9（预期） | `VideoWebviewImpl`（fallback） | `onLoadStart` 里 `evaluateJavascript`，**晚于站点脚本** ❌ |
+
+判据 `WebViewFeatureService.isDocumentStartScriptSupported`。官方 inappwebview.dev
+文档明确：`DOCUMENT_START_SCRIPT` 不支持时**无法保证 JS 在其它资源加载前注入**。
+
+### 已确认的排查结论
+
+- `lib/webview/video/**`、`lib/services/video_source/**`、
+  `video_controller.dart` 解析部分与上游 `Kazumi-main` **逐字节相同**
+  → 不是移植 bug（上游本就有这套双路径降级）。
+- `ndkVersion` 27 vs 28、`media_kit` 用 `ref: main`、`namespace`、缺
+  `pubspec.lock`、上游 CI 的 `--build-id=none` 补丁 —— **均与本问题无关**。
+- 用户 logcat 里的 `ClassNotFoundException: UiModeManager$ContrastChangeListener`
+  （该类为 API 34/Android 14 才有）被 catch，应用照常启动 → **非致命噪音，无关**。
+
+### 两个「可观测性缺口」（本次补丁动机）
+
+1. **超时分支原本没有任何日志**：`on VideoSourceTimeoutException` 只调
+   `_failLoading(...)` 改 UI 状态 → logcat 完全查不到。
+2. **TV 端丢弃 WebView 详细日志**：`logEventController`
+   （`Adding LogBridge handler` / `BlobParser script loaded` / `M3U8 source found` /
+   `Timer scan: found N video element(s)`）经 `logStream` 暴露，但**唯一消费者是
+   移动端 `lib/pages/video/video_page.dart`**，`lib/tv/` 下无消费者。
+   → TV 上只有 `print('[WebView] Created')` / `(legacy fallback)` 两行进 logcat。
+
+### 本次改动（**只加日志，不改任何行为**）
+
+| 文件 | 改动 |
+|------|------|
+| `lib/services/platform/webview_feature_service.dart` | 打印 `DOCUMENT_START_SCRIPT supported=?`；`isFeatureSupported` 包 try/catch（失败时保持原语义=false），避免 main 无日志中断 |
+| `lib/webview/video/video_webview_controller.dart` | 工厂打印 `selected=<Impl>` + `documentStartScriptSupported=` |
+| `lib/services/video_source/webview_video_source_service.dart` | 打印 create / initialized / `loadUrl=...` / sniffed / TIMEOUT；并把 `onLog` **转投 `KazumiLogger().d('WebView: ...')`**，让 TV 端也能在 logcat 看到 WebView 内部日志 |
+| `lib/pages/video/video_controller.dart` | 解析入口打印 plugin/legacy/url；**超时分支与 catch 分支补日志**（原先静默） |
+
+### 下一次构建要重点验证（安卓9 盒子）
+
+抓 logcat 时应能看到这条**决定性**日志：
+
+```
+VideoWebviewControllerFactory: selected=... | android=true | documentStartScriptSupported=<true|false>
+```
+
+- `documentStartScriptSupported=false` + `selected=VideoWebviewImpl`
+  → **证实**旧 WebView 走 fallback；
+- 再看是否有 `WebView: BlobParser script loaded` / `M3U8 source found` /
+  `VIDEO source found`：
+  - **全无** → 确认「注入没赶上站点脚本」→ 走增强修复
+    （原生层 `shouldInterceptRequest` 拦截 + resource timing 轮询）；
+  - 有 `M3U8 source found` 却仍超时 → 问题在回调链路，另查。
+
+命令：
+
+```bash
+adb shell dumpsys webviewupdate            # 取系统 WebView 版本
+adb logcat -c && adb logcat > tv9.log      # 抓「未过滤」日志
+# 在盒子上：进详情页 → 选源 → 直到出现「视频解析超时」
+adb logcat -d | grep -E "WebViewFeature|VideoWebviewControllerFactory|\
+WebViewVideoSource|VideoPageController|WebView:"
+```

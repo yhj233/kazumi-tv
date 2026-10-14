@@ -7,6 +7,7 @@ import 'package:kazumi/webview/video/impl/video_webview_impl.dart';
 import 'package:kazumi/webview/video/impl/video_webview_windows_impl.dart';
 import 'package:kazumi/webview/video/impl/video_webview_linux_impl.dart';
 import 'package:kazumi/webview/video/impl/video_webview_apple_impl.dart';
+import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/platform/webview_feature_service.dart';
 import 'package:kazumi/services/video_source/video_source_format.dart';
 
@@ -95,19 +96,27 @@ abstract class VideoWebviewController<T> {
 
 class VideoWebviewControllerFactory {
   static VideoWebviewController getController() {
+    // 【诊断】记录实际选中的实现，用于区分两条嗅探路径：
+    // - VideoWebviewAndroidImpl → AT_DOCUMENT_START 预注入（安卓15 正常的那条）
+    // - VideoWebviewImpl        → fallback（安卓9 上看不到 [WebView] Created 之外的信息）
+    final VideoWebviewController controller;
     if (Platform.isWindows) {
-      return VideoWebviewWindowsImpl();
-    }
-    if (Platform.isLinux) {
-      return VideoWebviewLinuxImpl();
-    }
-    if (Platform.isMacOS || Platform.isIOS) {
-      return VideoWebviewAppleImpl();
-    }
-    if (Platform.isAndroid &&
+      controller = VideoWebviewWindowsImpl();
+    } else if (Platform.isLinux) {
+      controller = VideoWebviewLinuxImpl();
+    } else if (Platform.isMacOS || Platform.isIOS) {
+      controller = VideoWebviewAppleImpl();
+    } else if (Platform.isAndroid &&
         WebViewFeatureService.isDocumentStartScriptSupported) {
-      return VideoWebviewAndroidImpl();
+      controller = VideoWebviewAndroidImpl();
+    } else {
+      controller = VideoWebviewImpl();
     }
-    return VideoWebviewImpl();
+
+    KazumiLogger().i(
+        'VideoWebviewControllerFactory: selected=${controller.runtimeType} '
+        '| android=${Platform.isAndroid} '
+        '| documentStartScriptSupported=${WebViewFeatureService.isDocumentStartScriptSupported}');
+    return controller;
   }
 }

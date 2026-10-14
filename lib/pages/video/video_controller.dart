@@ -605,6 +605,10 @@ abstract class _VideoPageController with Store implements Disposable {
     });
 
     try {
+      // 【诊断】记录解析入口上下文，便于定位是哪个源/哪种 parser 失败。
+      KazumiLogger().i(
+          'VideoPageController: resolving video source | plugin=${currentPlugin.name} '
+          '| legacy=${currentPlugin.useLegacyParser} | url=$url');
       final source = await _videoSourceService!.resolve(
         url,
         useLegacyParser: currentPlugin.useLegacyParser,
@@ -663,6 +667,11 @@ abstract class _VideoPageController with Store implements Disposable {
       if (session.isStale) {
         return;
       }
+      // 【诊断】原先此分支没有任何日志，导致「视频解析超时」在 logcat 中
+      // 完全不可见（用户看到 UI 报错，但日志里查不到）。
+      KazumiLogger().e(
+          'VideoPageController: video source resolution TIMEOUT | plugin=${currentPlugin.name} '
+          '| legacy=${currentPlugin.useLegacyParser} | url=$url');
       _failLoading('视频解析超时，请重试');
     } on VideoSourceCancelledException {
       KazumiLogger().i('VideoPageController: video URL resolution cancelled');
@@ -670,6 +679,11 @@ abstract class _VideoPageController with Store implements Disposable {
       if (session.isStale) {
         return;
       }
+      // 【诊断】同样补日志，区分「超时」与「抛异常」两种失败。
+      KazumiLogger().e(
+          'VideoPageController: video source resolution FAILED | plugin=${currentPlugin.name} '
+          '| legacy=${currentPlugin.useLegacyParser} | url=$url',
+          error: e);
       _failLoading('视频解析失败：${e.toString()}');
     }
   }

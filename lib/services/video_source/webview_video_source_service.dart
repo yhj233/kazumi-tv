@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/webview/video/video_webview_controller.dart';
 import 'package:kazumi/services/video_source/video_source_service.dart';
 
@@ -61,10 +62,16 @@ class WebViewVideoSourceService implements IVideoSourceService {
     request.throwIfNotCurrent(_activeRequest);
 
     if (_webview == null) {
+      KazumiLogger().i('WebViewVideoSource: creating webview controller');
       _webview = VideoWebviewControllerFactory.getController();
       await _webview!.init();
+      KazumiLogger().i('WebViewVideoSource: webview initialized');
 
       _logSubscription = _webview!.onLog.listen((log) {
+        // 【诊断】TV 端没有任何 logStream 消费者（消费者只有移动端
+        // lib/pages/video/video_page.dart），所以 WebView 内部日志在 TV 上
+        // 会被整体丢弃。这里额外打到 KazumiLogger，保证能进 logcat。
+        KazumiLogger().d('WebView: $log');
         if (!_logController.isClosed) {
           _logController.add(log);
         }
@@ -75,6 +82,8 @@ class WebViewVideoSourceService implements IVideoSourceService {
     try {
       request.throwIfNotCurrent(_activeRequest);
       didStartLoad = true;
+      KazumiLogger().i(
+          'WebViewVideoSource: loadUrl=$episodeUrl | legacy=$useLegacyParser | offset=$offset | timeout=${timeout.inSeconds}s');
       await _webview!.loadUrl(
         episodeUrl,
         useLegacyParser,
@@ -87,6 +96,9 @@ class WebViewVideoSourceService implements IVideoSourceService {
         timeout,
         onTimeout: () {
           request.throwIfNotCurrent(_activeRequest);
+          // 【诊断】超时是静默的（上层只改 UI 状态），这里补一条明确日志。
+          KazumiLogger().e(
+              'WebViewVideoSource: TIMEOUT ${timeout.inSeconds}s, no video source sniffed | url=$episodeUrl | legacy=$useLegacyParser');
           throw VideoSourceTimeoutException(timeout);
         },
       );
@@ -96,6 +108,8 @@ class WebViewVideoSourceService implements IVideoSourceService {
       final event = await Future.any([parserFuture, cancelFuture]);
 
       request.throwIfNotCurrent(_activeRequest);
+
+      KazumiLogger().i('WebViewVideoSource: sniffed video source ${event.url}');
 
       return VideoSource(
         url: event.url,
