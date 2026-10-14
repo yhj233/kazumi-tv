@@ -1,5 +1,9 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui';
+import 'package:dio/dio.dart';
+import 'package:kazumi/request/core/dio_factory.dart';
+import 'package:kazumi/request/core/network_config.dart';
 import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/network/proxy_utils.dart';
 import 'package:kazumi/services/logging/logger.dart';
@@ -16,6 +20,27 @@ class VideoWebviewImpl
   bool hasRegisteredHandlers = false;
   bool useLegacyParser = false;
   Timer? videoParserTimer;
+
+  /// ---- 原生资源代理：修复老 WebView（安卓9 / Chrome 66）子资源随机失败 ----
+  ///
+  /// 实机证据（Android 9 盒子）：同一域名下 `app.js`、`foot.js` 能加载成功，
+  /// 而 `template-web.js` / `emojis.js` / `main.css` / `play.min.js` /
+  /// `jx.wuzhoupai.com.wasm` 随机报 `net::ERR_CONNECTION_RESET` → 播放器起不来
+  /// → 15s 超时。老 WebView 对每个子资源各开一条连接（无 HTTP/2 复用），
+  /// 且加载失败后不会重试，于是「部分失败」必然拖垮整页。
+  ///
+  /// 方案：一旦某个 host 出现过加载失败，就把它标记为「不稳定」，此后该 host
+  /// 的子资源改由 Dio 原生取回（自带重试、并自动走应用内代理设置），再回填给
+  /// WebView。对现代 WebView 无影响（它们本来就很少失败）。
+  static const int _maxResourceRetries = 6;
+  static const int _maxAutoReloads = 2;
+  static const Duration _resourceTimeout = Duration(seconds: 10);
+
+  final Set<String> _flakyHosts = <String>{};
+  bool _reloadScheduled = false;
+  int _autoReloadCount = 0;
+  Timer? _autoReloadTimer;
+  Dio? _resourceDio;
 
   @override
   Future<void> init() async {
@@ -35,18 +60,31 @@ class VideoWebviewImpl
           initEventController.add(true);
         },
         shouldInterceptRequest: (controller, request) async {
-          if (useLegacyParser || isVideoSourceLoaded) return null;
           final url = request.url.toString();
           final lower = url.toLowerCase();
-          if (_isAdUrl(lower)) return null;
-          if (_isM3U8Url(lower) ||
-              _isRangeVideoRequest(lower, request.headers)) {
-            logEventController.add('Native intercepted video URL: $url');
-            isIframeLoaded = true;
-            isVideoSourceLoaded = true;
-            videoLoadingEventController.add(false);
-            unloadPage();
-            notifyVideoSourceResolved(url);
+
+          // A. 视频地址原生嗅探（保持原有行为）
+          if (!useLegacyParser && !isVideoSourceLoaded) {
+            if (!_isAdUrl(lower) &&
+                (_isM3U8Url(lower) ||
+                    _isRangeVideoRequest(lower, request.headers))) {
+              logEventController.add('Native intercepted video URL: $url');
+              isIframeLoaded = true;
+              isVideoSourceLoaded = true;
+              videoLoadingEventController.add(false);
+              unloadPage();
+              notifyVideoSourceResolved(url);
+              return null;
+            }
+          }
+
+          // B. 「不稳定 host」的子资源改由原生取回（带重试），再回填给 WebView
+          if (!isVideoSourceLoaded &&
+              (request.method ?? 'GET').toUpperCase() == 'GET' &&
+              request.isForMainFrame != true &&
+              !_isMediaStreamRequest(lower, request.headers) &&
+              _flakyHosts.contains(request.url.host)) {
+            return _fetchResourceNatively(url, request.headers);
           }
           return null;
         },
@@ -69,6 +107,7 @@ class VideoWebviewImpl
         onReceivedError: (controller, request, error) {
           logEventController
               .add('Error: ${error.description} - ${request.url}');
+          _markFlakyHost(request.url.host, error.description ?? 'load error');
         },
       ),
     );
@@ -86,6 +125,12 @@ class VideoWebviewImpl
     count = 0;
     this.offset = offset;
     this.useLegacyParser = useLegacyParser;
+    // 每次新的解析从头开始计重载预算；_flakyHosts 故意保留，
+    // 这样同一来源的下一集可以直接走原生取回，不再付首次失败的代价。
+    _autoReloadCount = 0;
+    _reloadScheduled = false;
+    _autoReloadTimer?.cancel();
+    _autoReloadTimer = null;
     isIframeLoaded = false;
     isVideoSourceLoaded = false;
     videoLoadingEventController.add(true);
@@ -427,6 +472,9 @@ class VideoWebviewImpl
   Future<void> unloadPage() async {
     videoParserTimer?.cancel();
     videoParserTimer = null;
+    _autoReloadTimer?.cancel();
+    _autoReloadTimer = null;
+    _reloadScheduled = false;
     await webviewController?.loadUrl(
         urlRequest: URLRequest(url: WebUri("about:blank")));
   }
@@ -435,10 +483,137 @@ class VideoWebviewImpl
   Future<void> dispose() async {
     videoParserTimer?.cancel();
     videoParserTimer = null;
+    _autoReloadTimer?.cancel();
+    _autoReloadTimer = null;
     await headlessWebView?.dispose();
     headlessWebView = null;
     webviewController = null;
+    _resourceDio?.close(force: false);
+    _resourceDio = null;
     disposeEventControllers();
+  }
+
+  // ---------------------------------------------------------------------------
+  // 原生资源代理
+  // ---------------------------------------------------------------------------
+
+  Dio _ensureResourceDio() => _resourceDio ??= DioFactory.createForConfig(
+        NetworkConfig.fromSettings(
+          connectTimeout: _resourceTimeout,
+          receiveTimeout: _resourceTimeout,
+        ).copyWith(enableLog: false),
+      );
+
+  /// 原生取回单个子资源，失败自动重试。全部失败返回 null（交回 WebView 自己加载）。
+  Future<WebResourceResponse?> _fetchResourceNatively(
+      String url, Map<String, String>? requestHeaders) async {
+    final dio = _ensureResourceDio();
+    final accept = requestHeaders?['Accept'] ?? requestHeaders?['accept'];
+    final referer = requestHeaders?['Referer'] ?? requestHeaders?['referer'];
+
+    for (var attempt = 0; attempt < _maxResourceRetries; attempt++) {
+      if (isVideoSourceLoaded) return null;
+      try {
+        final resp = await dio.get<List<int>>(
+          url,
+          options: Options(
+            responseType: ResponseType.bytes,
+            followRedirects: true,
+            validateStatus: (status) =>
+                status != null && status >= 200 && status < 400,
+            headers: {
+              'user-agent': getRandomUA(),
+              if (accept != null) 'accept': accept,
+              if (referer != null) 'referer': referer,
+            },
+          ),
+        );
+        final data = resp.data;
+        if (data == null || data.isEmpty) {
+          continue;
+        }
+        final bytes = data is Uint8List ? data : Uint8List.fromList(data);
+        logEventController.add(
+            'Native resource proxy OK: $url (${bytes.length}B, try ${attempt + 1})');
+        return WebResourceResponse(
+          contentType:
+              _contentTypeFor(url, resp.headers.map['content-type']?.first),
+          contentEncoding: 'utf-8',
+          statusCode: 200,
+          reasonPhrase: 'OK',
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-cache',
+          },
+          data: bytes,
+        );
+      } catch (e) {
+        if (attempt >= _maxResourceRetries - 1) {
+          logEventController.add('Native resource proxy FAILED: $url ($e)');
+          return null;
+        }
+        await Future<void>.delayed(Duration(milliseconds: 80 * (attempt + 1)));
+      }
+    }
+    return null;
+  }
+
+  String _contentTypeFor(String url, String? serverContentType) {
+    if (serverContentType != null && serverContentType.isNotEmpty) {
+      return serverContentType.split(';').first.trim();
+    }
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? '';
+    if (path.endsWith('.js')) return 'application/javascript';
+    if (path.endsWith('.css')) return 'text/css';
+    if (path.endsWith('.json')) return 'application/json';
+    if (path.endsWith('.wasm')) return 'application/wasm';
+    if (path.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
+    if (path.endsWith('.png')) return 'image/png';
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+    if (path.endsWith('.gif')) return 'image/gif';
+    if (path.endsWith('.svg')) return 'image/svg+xml';
+    if (path.endsWith('.woff')) return 'font/woff';
+    if (path.endsWith('.woff2')) return 'font/woff2';
+    return 'application/octet-stream';
+  }
+
+  /// 流媒体请求（m3u8 / 分片 / 带 Range）不接管，交给播放器自己处理，
+  /// 避免把视频流拖进 Dart 层。
+  bool _isMediaStreamRequest(String lower, Map<String, String>? headers) {
+    if (headers != null) {
+      final range = headers['Range'] ?? headers['range'];
+      if (range != null && range.startsWith('bytes=')) return true;
+    }
+    final path = Uri.tryParse(lower)?.path.toLowerCase() ?? '';
+    const exts = ['.m3u8', '.ts', '.m4s', '.mp4', '.flv', '.mpd', '.key'];
+    for (final ext in exts) {
+      if (path.endsWith(ext)) return true;
+    }
+    return false;
+  }
+
+  void _markFlakyHost(String host, String reason) {
+    if (host.isEmpty) return;
+    final isNew = _flakyHosts.add(host);
+    if (!isNew) return;
+    logEventController.add('WebView: 标记不稳定 host -> $host ($reason)');
+    _scheduleAutoReload();
+  }
+
+  /// 首次踩到失败时重载一次页面，让后续请求走原生代理。
+  void _scheduleAutoReload() {
+    if (useLegacyParser || isVideoSourceLoaded) return;
+    if (_reloadScheduled || _autoReloadCount >= _maxAutoReloads) return;
+    _reloadScheduled = true;
+    _autoReloadCount++;
+    logEventController
+        .add('WebView: 计划自动重载以重试失败资源 (第 $_autoReloadCount 次)');
+    _autoReloadTimer?.cancel();
+    _autoReloadTimer = Timer(const Duration(milliseconds: 1500), () {
+      _reloadScheduled = false;
+      if (isVideoSourceLoaded) return;
+      webviewController?.reload();
+    });
   }
 
   bool _isM3U8Url(String lower) {

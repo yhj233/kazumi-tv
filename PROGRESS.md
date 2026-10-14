@@ -776,3 +776,67 @@ INFO WebViewVideoSource: resolved by DIRECT fetch in 1xxxms | url=...
 INFO  DirectVideoSource: no usable media url (...) -> fallback to WebView
 DEBUG WebViewVideoSource: direct fetch missed (...)  falling back to WebView sniff (window=8s)
 ```
+
+---
+
+## 修复二：老 WebView 子资源随机失败 → 原生取回 + 重试（`video_webview_impl.dart`）
+
+### 实机证据（build-41，Android 9 盒子，AGE 源）
+
+盒子 WebView 是 **Chrome 66**，`DOCUMENT_START_SCRIPT` 不支持 →
+`VideoWebviewControllerFactory: selected=VideoWebviewImpl | documentStartScriptSupported=false`
+（安卓15 走的是 `VideoWebviewAndroidImpl`，所以那边正常）。
+
+该次播放页加载的完整日志：
+
+```
+00:23:27.317  started loading: https://www.agedm.io/play/20260260/1/1
+00:23:27.318  Injecting blob parser script (onLoadStart)
+00:23:27.835  loading completed: ...            ← 仅 517ms
+00:23:27.897  Starting video parser timer
+00:23:28.9~40.1  Timer scan: found 0 video element(s)   ×12
+00:23:40.199  TIMEOUT 13s, no video source sniffed
+```
+
+同期 `onReceivedError` 打到的资源（**关键**）：
+
+```
+✅ app.js / foot.js                      —— 加载成功，没有报错
+❌ age/statics/css/main.css              —— net::ERR_CONNECTION_RESET
+❌ age/statics/js/template-web.js        —— ERR_CONNECTION_RESET → template is not defined
+❌ age/statics/js/emojis.js              —— ERR_CONNECTION_RESET
+❌ age/statics/images/avatar.jpg         —— ERR_CONNECTION_RESET
+❌ jx/20230723ver/Play/play.min.js       —— ERR_CONNECTION_RESET（解析器核心）
+❌ jx/20230723ver/Play/jx.wuzhoupai.com.wasm —— ERR_CONNECTION_RESET（解密引擎）
+```
+
+**同一个域名 `xcdn.khfed.com:8443` 上，有的资源成功、有的失败** →
+说明不是「域名被墙」，而是**每条连接都有随机失败率**。老 WebView 对每个子资源
+各开一条连接（没有 HTTP/2 单连接复用），且**加载失败后不重试**，于是「部分失败」
+必然拖垮整页：`template` 未定义 → 播放器起不来 → 无 `<video>` → 无 m3u8 → 超时。
+
+### 修法
+
+在 `shouldInterceptRequest` 里加一层**原生资源代理**：
+
+1. `onReceivedError` 时把该请求的 **host 标记为「不稳定」**（`_flakyHosts`）；
+2. 之后凡是发往该 host 的子资源请求（非主文档、GET、非流媒体），
+   改由 **Dio 原生取回（最多 6 次重试，指数退避）**，再以
+   `WebResourceResponse` 回填给 WebView；
+3. 首次标记时**自动重载一次页面**（预算 2 次/次解析），让该主机立即走代理；
+4. `_flakyHosts` 跨 `loadUrl` 保留 → 同一来源的下一集不再付首次失败的代价。
+
+附带好处：Dio 走 `NetworkConfig.fromSettings()`，因此**应用内代理设置对 WebView
+子资源也生效了**（老 WebView 不支持 `PROXY_OVERRIDE`，原本做不到）。
+
+### 新增日志（下一次构建验证）
+
+```
+WebView: 标记不稳定 host -> xcdn.khfed.com (net::ERR_CONNECTION_RESET)
+WebView: 计划自动重载以重试失败资源 (第 1 次)
+Native resource proxy OK: https://xcdn.khfed.com:8443/age/statics/js/template-web.js (xxxB, try 2)
+```
+
+期望结果：`Timer scan: found 1 video element(s)` 或直接
+`Native intercepted video URL: ...m3u8`，而不再是连续 `found 0 video element(s)`。
+
