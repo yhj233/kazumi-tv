@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/network/metered_network_service.dart';
@@ -16,6 +17,18 @@ class PlaybackCachePolicy {
   static const int _lowMemoryBufferSize = 2 * 1024 * 1024;
   static const int _defaultBufferSize = 1500 * 1024 * 1024;
 
+  /// 低于该内存的设备按「受限设备」处理，demuxer 缓存必须收紧。
+  static const int _constrainedMemoryThresholdKb = 3 * 1024 * 1024;
+
+  /// 受限设备单侧缓存上限（前向 + 回退都取该值）。
+  ///
+  /// media_kit 会把 bufferSize 同时写到 `demuxer-max-bytes` 和
+  /// `demuxer-max-back-bytes`，所以实际预算是它的两倍。默认的 1500 MB 意味着
+  /// 在 2 GB 内存的电视盒子上 mpv 会一路读到接近物理内存上限：实测该设备
+  /// `MemTotal=2 GB / MemAvailable≈0.9 GB`，起播时正是长期无画面、零流量的
+  /// 状态。收到 96 MB 后缓存行为正常，网络读取也不再被内存压力干扰。
+  static const int _constrainedBufferSize = 96 * 1024 * 1024;
+
   final bool Function() _isLocalPlayback;
   final Player? Function() _currentPlayer;
   final AsyncSerialQueue _writes = AsyncSerialQueue();
@@ -27,12 +40,55 @@ class PlaybackCachePolicy {
       !_isLocalPlayback() &&
       MeteredNetworkService.isMetered;
 
-  int get bufferSize => LowMemoryMode.current.isEnabled(
-        isMetered: MeteredNetworkService.isMetered,
-        isLocalPlayback: _isLocalPlayback(),
-      )
-          ? _lowMemoryBufferSize
-          : _defaultBufferSize;
+  int get bufferSize {
+    if (LowMemoryMode.current.isEnabled(
+      isMetered: MeteredNetworkService.isMetered,
+      isLocalPlayback: _isLocalPlayback(),
+    )) {
+      return _lowMemoryBufferSize;
+    }
+    if (isConstrainedDevice) {
+      return _constrainedBufferSize;
+    }
+    return _defaultBufferSize;
+  }
+
+  static int? _deviceMemTotalKbCache;
+
+  /// `/proc/meminfo` 的 `MemTotal`（KB）。非 Linux/Android 平台返回 null。
+  static int? _deviceMemTotalKb() {
+    if (_deviceMemTotalKbCache != null) {
+      return _deviceMemTotalKbCache;
+    }
+    int? total;
+    if (Platform.isLinux || Platform.isAndroid) {
+      try {
+        final file = File('/proc/meminfo');
+        if (file.existsSync()) {
+          for (final line in file.readAsLinesSync()) {
+            if (!line.startsWith('MemTotal:')) {
+              continue;
+            }
+            final match = RegExp(r'(\d+)').firstMatch(line);
+            if (match != null) {
+              total = int.tryParse(match.group(1)!);
+            }
+            break;
+          }
+        }
+      } catch (_) {
+        total = null;
+      }
+    }
+    _deviceMemTotalKbCache = total;
+    return total;
+  }
+
+  /// 内存不足以承担默认缓存预算的设备（典型：2 GB 的 Android TV 盒子）。
+  static bool get isConstrainedDevice {
+    final total = _deviceMemTotalKb();
+    return total != null && total < _constrainedMemoryThresholdKb;
+  }
 
   void startWatching() {
     if (_settingsSubscription != null) {
@@ -65,6 +121,8 @@ class PlaybackCachePolicy {
         await pp.setProperty('demuxer-max-bytes', size);
         await pp.setProperty('demuxer-max-back-bytes', size);
       });
+      KazumiLogger().i(
+          'PlaybackCachePolicy: demuxer 缓存上限 $bufferSize 字节 (MemTotal=${_deviceMemTotalKb() ?? -1} KB)');
     } catch (e) {
       KazumiLogger().w(
         'PlaybackCachePolicy: failed to apply demuxer cache size',

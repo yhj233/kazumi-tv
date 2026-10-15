@@ -840,3 +840,85 @@ Native resource proxy OK: https://xcdn.khfed.com:8443/age/statics/js/template-we
 期望结果：`Timer scan: found 1 video element(s)` 或直接
 `Native intercepted video URL: ...m3u8`，而不再是连续 `found 0 video element(s)`。
 
+
+---
+
+## 2026-10-16 现场取证：解析成功但 mpv 从不加载媒体（tv-build-44 实机）
+
+用户复现后（安卓 9 盒子，`MGV3201-ZG`）出现比此前更严重的症状：
+**任何一集都不出画面**（连之前能播的第 1 集也不行），且界面不报错。
+
+### 实机证据（logcat + /proc 每秒采样，900s）
+
+播放链路本身是通的：
+
+```
+01:50:38.050 WebView: VideoTagParser script loaded: https://www.agedm.io/play/20260260/1/3
+01:50:40.774 WebView: Console [LOG]: %c ArtPlayer %c 5.0.9
+01:50:41.964 WebView: Native intercepted video URL: https://v16-vod.capcutvod.com/.../<id>/
+01:50:41.985 PlayerController: online playback, url: https://v16-vod.capcutvod.com/...
+01:50:42.119 VideoOutputManager.create: handle=2136120552   ← 安卓 Surface 创建成功
+01:50:42.277 PlayerController: video initialized             ← open() 返回
+```
+
+但 mpv 侧**什么都没做**——每秒采样 `/proc/<pid>/task/*/stat` 后按时间轴对齐：
+
+```
+01:50:43 → 01:51:01（第 3 集）  12870:core:0.02 12872:dnd:0.00 12890:vo:0.00
+                                12893:worker:0.00 12895:opener:0.00
+01:48:59 → 01:50:24（第 1 集）  4259:core:0.02 4268:dnd:0.00 4278:vo:0.00
+                                4282:worker:0.00 4285:opener:0.00
+```
+
+- `opener` 累计 CPU **恒为 0.00s** → mpv 从未尝试打开该 URL；
+- 线程表里**不存在 `demux` 线程** → 没有任何解复用器在跑；
+- `vo` 0.00s → 视频输出从未初始化；`core` 只有 20ms → 仅够完成 `mpv_create`/`mpv_initialize`；
+- `playerLogLevel=3`（= `MPVLogLevel.values[3]` = `v`，最高详细度）却**一条 mpv 日志都没有**；
+- 同一次运行里 `Player intent error` 0 条、`E flutter` 0 条。
+
+结论：**mpv 的播放列表是空的**。`Player.open()` 在 media_kit 里的实现是
+「把 URL 写进 `<filesDir>/<uuid>` → `loadlist <file> append` → `playlist-pos=0`」，
+并且 `Future.delayed(5s)` 后删除该文件。列表为空 + `playlist-pos` 设 0 是空操作，
+于是 mpv 静静地停在 idle，Dart 侧 `duration/width` 永远为 0 ——
+UI 因为 `playback.loading = false` 而离开转圈、露出黑色 `Video` 组件，
+用户看到的就是「没有画面」。
+
+### 顺带确认的几件事
+
+- `MPVLogLevel` 枚举**只有 6 个值**（`error, warn, info, v, debug, trace`，
+  `none`/`fatal` 在源码里被注释掉了），所以 `playerLogLevel` 的 0~3 与
+  mpv 级别恰好一一对应，**不存在越界跳过的坑**。
+- `PlayerConfiguration.async` 默认 **true** → `_command` 会 `await`
+  `MPV_EVENT_COMMAND_REPLY`。命令能返回就证明**事件通道是通的**；
+  命令失败会上报错误事件（实测 0 条）→ mpv 认为 `loadlist` "成功"，
+  只是没有任何条目。
+- `hardwareDecoder` 的默认值本来就是 `'auto-safe'`（`settings_keys.dart`），
+  此前注入该值并未改变行为；`playerDebugMode` / `playerLogLevel` 也确认已生效
+  （Flutter 引擎在设置写入**之后**的 01:47:46 才启动）。所以这一轮故障
+  **不是我们改设置造成的**。
+- `GStorage.getSetting` 直接在运行中的 Hive box 上取值，**改磁盘上的
+  `setting.hive` 必须先 `am force-stop`**，否则运行中的 app 读不到。
+- 「高内存占用」假设的评估：media_kit 无条件 `cache-on-disk: yes`，且把
+  `bufferSize` 同时写进 `demuxer-max-bytes` 与 `demuxer-max-back-bytes`
+  （Kazumi 传 1500MB → 实际预算 3GB），在 2GB 内存盒子上确实是隐患，
+  **但它不是本次「不出画面」的原因**：卡死期间 `/proc/<pid>/io` 的
+  `read_bytes`/`write_bytes` 增量均为 0，mpv 所有线程 CPU 为 0，
+  没有任何内存压力或磁盘写的迹象。该隐患仍按既定策略收紧（见下）。
+
+### 本轮修法（tv-build-45）
+
+1. **`loadfile` 直开兜底**（新增「阶段零」）：解复用阶段完全无数据时，
+   先绕过 media_kit 的临时播放列表文件，直接用
+   `pp.command(['loadfile', url])` 投喂 URL。
+   请求头不受影响——media_kit 的 `on_load` 钩子是用 URI 回查 `Media`
+   的**静态**请求头表（`Media(uri).httpHeaders`），与加载方式无关。
+2. **mpv 自诊断通道**：用 `print-text` + 属性展开把 mpv 内部状态
+   （`idle-active` / `playlist-pos` / `playlist-count` / `pause` /
+   `duration` / `width` / `vo` / `vid` / `path`）写进 logcat，
+   前缀 `KAZUMI-DIAG[...]`，在 `player.stream.log` 里被无条件放行。
+   全程 `unawaited`，避免命令等不到回复时把起播流程拖死。
+3. 补听 `player.stream.log` 的 `error`/`fatal`（media_kit 只转发
+   `file`/`ffmpeg`(须 `tcp:` 开头)/`vd`/`ad`/`cplayer`/`stream` 六种，
+   `[ffmpeg/video]` 类解码错误完全在盲区）；
+4. 起播看门狗（解复用 18s / 解码 28s）+ 软解重开 + 页面重新解析视频源；
+5. 受限设备（`MemTotal < 3GB`）把 demuxer 缓存从 1500MB 收到 96MB。

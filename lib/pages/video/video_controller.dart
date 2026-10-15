@@ -415,6 +415,14 @@ abstract class _VideoPageController with Store implements Disposable {
     _errorMessage = message;
   }
 
+  /// 播放阶段失败（直链解析成功但始终无法起播）时由页面调用。
+  ///
+  /// 复用解析失败的错误界面，让「播放卡住」也有明确的可见出口，
+  /// 而不是停留在「视频资源解析成功, 播放器加载中」的无限转圈状态。
+  void reportPlaybackFailure(String message) {
+    _failLoading(message);
+  }
+
   Future<void> changeEpisode(
     int episode, {
     int currentRoad = 0,

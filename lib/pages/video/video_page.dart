@@ -26,6 +26,7 @@ import 'package:kazumi/pages/video/video_playback_args.dart';
 import 'package:kazumi/pages/video/video_page_layout.dart';
 import 'package:kazumi/pages/video/video_side_panel.dart';
 import 'package:kazumi/pages/video/video_system_bars.dart';
+import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/player/pip_utils.dart';
 import 'package:kazumi/services/player/timed_shutdown_service.dart';
 import 'package:kazumi/services/storage/storage.dart';
@@ -57,6 +58,10 @@ class _VideoPageState extends State<VideoPage>
   VideoPageController get videoPageController => widget.videoPageController;
   bool _didInitializePlayback = false;
   bool _isExiting = false;
+
+  /// 播放阶段卡死时的自动恢复计数，按集重置，避免无限重试。
+  int? _autoRecoverEpisode;
+  int _autoRecoverCount = 0;
   HistoryController get historyController => widget.historyController;
   DownloadController get downloadController => widget.downloadController;
   late bool playResume;
@@ -85,6 +90,9 @@ class _VideoPageState extends State<VideoPage>
     windowManager.addListener(this);
 
     tabController = TabController(length: 2, vsync: this);
+
+    // 播放阶段长时间无画面时，交给页面重新解析视频源。
+    playerController.onPlaybackStartupStalled = _recoverFromPlaybackStall;
 
     playResume = GStorage.getSetting(SettingsKeys.playResume);
     disableAnimations =
@@ -214,6 +222,10 @@ class _VideoPageState extends State<VideoPage>
     try {
       _logSubscription?.cancel();
     } catch (_) {}
+    if (identical(playerController.onPlaybackStartupStalled,
+        _recoverFromPlaybackStall)) {
+      playerController.onPlaybackStartupStalled = null;
+    }
     _pipModeListener();
     _desktopPipEntry?.remove();
     _desktopPipEntry = null;
@@ -258,6 +270,35 @@ class _VideoPageState extends State<VideoPage>
         currentRoad: currentRoad,
         offset: offset,
         playerController: playerController);
+  }
+
+  /// 起播卡死（长时间无画面且无任何错误事件）时的兜底重试。
+  ///
+  /// 直链是 CDN 的签名地址，每次解析由插件页面返回的落地节点不同；播放阶段
+  /// 卡住时重新解析通常比原样重开同一直链更有效。同一集最多重试两次，防止
+  /// 「解析正常但播放必然失败」时陷入死循环。
+  Future<void> _recoverFromPlaybackStall() async {
+    if (!mounted || _isExiting) {
+      return;
+    }
+    final selection = videoPageController.selectedEpisode;
+    if (_autoRecoverEpisode != selection.episode) {
+      _autoRecoverEpisode = selection.episode;
+      _autoRecoverCount = 0;
+    }
+    if (_autoRecoverCount >= 2) {
+      KazumiLogger().e(
+          'VideoPage: 第${selection.episode}集自动恢复已达上限，切换到错误界面');
+      videoPageController.reportPlaybackFailure(
+          '播放失败：该视频源多次重试后仍无画面，请更换其他视频来源');
+      return;
+    }
+    _autoRecoverCount++;
+    KazumiLogger().i(
+        'VideoPage: 播放卡住，重新解析视频源（第${selection.episode}集，第 $_autoRecoverCount 次）');
+    await changeEpisode(selection.episode,
+        currentRoad: selection.road,
+        offset: videoPageController.historyOffset);
   }
 
   void _revealCurrentEpisode() {
