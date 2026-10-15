@@ -6,8 +6,12 @@ name: verify-es-downlevel
 # parser at ecmaVersion 2018 (the grammar Chrome 66 actually implements) and
 # compares runtime behaviour against the original under node.
 #
-# Fixtures include a faithful extract of the statement that broke the AGE source
-# on the box: a single `?.` inside a 165 KB minified artplayer.min.js.
+# Fixtures include the unmodified ArtPlayer 5.0.9 bundle - the very file that
+# broke the AGE source on the box. It contains exactly one ES2020 construct, a
+# `t.$parentItem?.selector`, and that one token is enough to make Chrome 66 throw
+# away the whole 165 KB file. The check proves the bundle does not parse at
+# ES2018 before the downleveler runs and does after, with only a few bytes around
+# that `?.` changed.
 #
 # No Flutter SDK is needed for this job - js_downlevel.dart only imports
 # dart:convert / dart:typed_data.

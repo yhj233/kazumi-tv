@@ -15,6 +15,10 @@
 //   5. nothing the downleveler is not confident about is rewritten - the
 //      side-effecting fixtures must come out byte-for-byte identical, with the
 //      impossible cases reported as skipped
+//   6. the real unmodified ArtPlayer 5.0.9 bundle (the `bundle-*` fixture, the
+//      exact file that broke the box) does not parse at ES2018 before and does
+//      after, and only a few bytes around its single `?.` changed - i.e. the
+//      fix is a surgical splice, not a rewrite of the file
 //
 // exit code 0 = all good, 1 = at least one check failed.
 "use strict";
@@ -92,13 +96,46 @@ function checkItem(item, originalSource, label) {
     return null;
   }
   const outPath = item.outPath;
-  const unsafe = String(item.name).startsWith("unsafe-");
+  const name = String(item.name);
+  const unsafe = name.startsWith("unsafe-");
+  // `bundle-*` fixtures are whole real-world player bundles. They cannot be run
+  // standalone (they need a DOM), so they are judged on grammar and on the
+  // shape of the edit instead of on runtime behaviour.
+  const bundle = name.startsWith("bundle-");
+  const inPath = bundle ? path.join(HERE, "samples", name) : null;
 
   // (1) parse checks
   const p2018 = acornOk(outPath, 2018);
   const p2022 = acornOk(outPath, 2022);
   if (!p2022.ok) fail(`${label}: output is not valid ES2022 -> ${p2022.out}`);
-  if (unsafe) {
+  if (bundle) {
+    if (!p2018.ok) {
+      fail(`${label}: output still does not parse at ES2018 -> ${p2018.out}`);
+    }
+    // The fixture must genuinely be broken on Chrome 66, and the only thing it
+    // needs beyond ES2018 must be an ES2020-level construct - otherwise a pass
+    // here would prove nothing about the downleveler.
+    const in2018 = acornOk(inPath, 2018);
+    const in2020 = acornOk(inPath, 2020);
+    if (in2018.ok) {
+      fail(`${label}: fixture parses at ES2018 - it does not exercise the bug`);
+    }
+    if (!in2020.ok) {
+      fail(`${label}: fixture is not valid ES2020 either -> ${in2020.out}`);
+    }
+    // A surgical splice, not a rewrite: only a small middle may differ.
+    const a = fs.readFileSync(inPath, "utf8");
+    const b = fs.readFileSync(outPath, "utf8");
+    let pre = 0;
+    while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+    let suf = 0;
+    while (suf < a.length - pre && suf < b.length - pre &&
+           a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+    const middle = Math.max(a.length - pre - suf, b.length - pre - suf);
+    if (middle > 200) {
+      fail(`${label}: ${middle} bytes differ outside the small rewrite - expected a surgical splice`);
+    }
+  } else if (unsafe) {
     if (p2018.ok) {
       fail(`${label}: fixture is supposed to stay ES2020-only but parses as ES2018`);
     }
@@ -166,7 +203,9 @@ for (const item of report) {
   if (item.kind !== "sample") continue;
   // always compare against the pristine fixture on disk
   const src = fs.readFileSync(path.join(HERE, "samples", item.name), "utf8");
-  checkItem(item, src, `sample/${item.name}`);
+  // bundles are not runnable standalone, so skip the behaviour comparison
+  const runnable = String(item.name).startsWith("bundle-") ? null : src;
+  checkItem(item, runnable, `sample/${item.name}`);
 }
 
 // --------------------------------------------------------------------------- //
