@@ -58,11 +58,29 @@ class VideoWebviewImpl
   /// 解析是整文件失败 → `ArtPlayer` 从未被定义 → 播放器起不来 → 页面上永远没有
   /// `<video>` → 嗅探 13s 超时。同一站点另外 7 个 JS 全部是 Chrome 66 兼容的。
   ///
-  /// 所以：一旦控制台报出 `SyntaxError`，就打开降级开关并重载一次，
-  /// 此后该页面的 JS 子资源都走原生取回并做 ES2020→ES5 改写
+  /// 所以：脚本子资源改走原生取回 + ES2020→ES5 改写
   /// （见 `lib/webview/video/js_downlevel.dart`，算法已用 acorn + node
-  /// 运行等价性测试验证过）。对现代 WebView 完全无影响——它根本走不到这里。
-  bool _downlevelJs = false;
+  /// 运行等价性测试，以及真实 ArtPlayer 5.0.9 整包在 CI 上验证过）。
+  ///
+  /// ### 为什么默认是 true
+  ///
+  /// 本类**只在** DOCUMENT_START_SCRIPT 不受支持时才被选中
+  /// （见 `VideoWebviewControllerFactory`），也就是说走到这里 WebView 一定低于 84；
+  /// 而 `?.`/`??` 需要 80+、`||=`/`&&=`/`??=` 需要 85+，所以**先按「可能需要降级」处理**。
+  ///
+  /// tv-build-43 的实机日志证明「等报错再开」来不及：页面跑了 **11s** 才把
+  /// artplayer.min.js 的 SyntaxError 报出来，此时再重载一次，13s 的嗅探窗口
+  /// （还要扣掉直取耗时）已经不够第二次加载 —— 开关确实开了，但降级后的脚本
+  /// 一次都没被请求到，最终还是超时。
+  ///
+  /// 默认打开是安全的：只有**确实含** ES2020 语法的脚本才会被改写
+  /// （`JsDownlevel.downlevelBytes` 对不需要改的返回 null，原样回填），所以对
+  /// Chrome 80~83 这类只缺逻辑赋值的引擎，代价最多是多走一次原生取回。
+  /// 随后 `_probeEs2020Support()` 会直接问一次引擎的真实能力，三样都支持就关回去。
+  bool _downlevelJs = true;
+
+  /// 能力探测只做一次（WebView 的语法能力不会中途变化）。
+  bool _capabilityProbed = false;
 
   @override
   Future<void> init() async {
@@ -130,12 +148,13 @@ class VideoWebviewImpl
           final String message = consoleMessage.message;
           logEventController.add(
               'Console [${consoleMessage.messageLevel}]: $message');
-          // 老 WebView 解析不了现代语法时，控制台会报 SyntaxError。
-          // 这是「页面脚本被整体丢弃」的唯一可靠信号，用它来开启降级并重载一次。
+          // 兜底：`_downlevelJs` 默认已经打开，理论上不该走到这里。万一探测结果
+          // 说「引擎支持 ES2020」但页面脚本仍然整文件解析失败，就把它当成反证，
+          // 立刻翻回降级并重载一次。
           if (!_downlevelJs && message.contains('SyntaxError')) {
             _downlevelJs = true;
             logEventController.add(
-                'WebView: 检测到脚本语法错误（老 WebView 不支持 ES2020），已开启 JS 降级');
+                'WebView: 检测到脚本语法错误（与能力探测结果不符），已重新开启 JS 降级');
             _scheduleAutoReload();
           }
         },
@@ -147,6 +166,87 @@ class VideoWebviewImpl
       ),
     );
     await headlessWebView?.run();
+    // 必须在加载视频页**之前**问清楚引擎能力，否则第一份脚本已经按老样子
+    // 发给 WebView 了（tv-build-43 就是败在这里）。
+    await _probeEs2020Support();
+  }
+
+  /// 直接向引擎要答案：把几段现代语法丢给 `new Function()` 去编译。
+  ///
+  /// 引擎不支持的语法会在**编译期**抛 SyntaxError，try/catch 就能拿到结论。
+  /// 这测的是引擎的**真实能力**，跟机型无关；也不能用 UA 判断——本项目的
+  /// UA 是 `getRandomUA()` 随机伪装的，里面根本没有可信的 Chrome 版本号。
+  ///
+  /// 返回 `flags[0]` 是对照位（编译 `return 1;` 的结果）：如果连它都是 0，
+  /// 说明探测环境本身有问题（例如注入被包装成函数导致取不到值），
+  /// 那么整组结果不可信，保持默认的保守策略即可。
+  static const String _es2020ProbeJs = r"""
+    (function () {
+      window.__kazumiEs2020Flags = (function () {
+        function can(src) { try { new Function(src); return '1'; } catch (e) { return '0'; } }
+        return can('return 1;')                        /* 对照位 */
+             + can('return ({}).a?.b;')                /* optional chaining   Chrome 80+ */
+             + can('return (null ?? 1);')              /* nullish coalescing  Chrome 80+ */
+             + can('var x = 0; x ||= 1; return x;');   /* logical assignment  Chrome 85+ */
+      })();
+      return window.__kazumiEs2020Flags;
+    })();
+    """;
+
+  Future<void> _probeEs2020Support() async {
+    if (_capabilityProbed) {
+      return;
+    }
+    _capabilityProbed = true;
+    final controller = webviewController;
+    if (controller == null) {
+      logEventController.add('WebView: ES2020 能力探测跳过（无 controller），保持保守策略');
+      return;
+    }
+
+    for (int attempt = 1; attempt <= 6; attempt++) {
+      String? flags;
+      try {
+        if (attempt == 1) {
+          // 先确保有一个可求值的文档（headless WebView 起来时通常已经是
+          // about:blank，这里只是不让探测依赖那个隐含状态）。
+          await controller
+              .loadUrl(urlRequest: URLRequest(url: WebUri('about:blank')));
+        }
+        final dynamic direct =
+            await controller.evaluateJavascript(source: _es2020ProbeJs);
+        if (direct is String && direct.isNotEmpty) {
+          flags = direct;
+        } else {
+          // 有些实现会把注入的源码再包一层函数，于是最后那个表达式的值取不到；
+          // 读回上面写下的那个全局变量即可。
+          final dynamic global = await controller
+              .evaluateJavascript(source: 'String(window.__kazumiEs2020Flags)');
+          if (global is String && global.isNotEmpty) {
+            flags = global;
+          }
+        }
+      } catch (e) {
+        logEventController.add('WebView: ES2020 能力探测第 $attempt 次尝试失败：$e');
+      }
+
+      if (flags != null && flags.length >= 4) {
+        final String probes = flags.substring(1);
+        if (flags[0] != '1') {
+          logEventController.add(
+              'WebView: ES2020 能力探测结果不可信（对照位=$flags[0]，$flags），保持保守策略');
+          return;
+        }
+        final bool needsDownlevel = probes.contains('0');
+        _downlevelJs = needsDownlevel;
+        logEventController.add(
+            'WebView: ES2020 能力探测 opt/nul/assign=$probes → '
+            '${needsDownlevel ? '引擎缺语法，脚本走原生取回 + 降级' : '引擎原生支持，不做任何改写'}');
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    logEventController.add('WebView: ES2020 能力探测无结果，保持保守策略（默认按需降级）');
   }
 
   @override
