@@ -61,3 +61,10 @@ android/build/reports/problems/
 kazumi-key-gen.sh
 kazumi-tv-release.keystore
 askpass.bat
+
+# ES2020 downlevel verification harness (tools/es_downlevel)
+# node_modules + lockfile come from `npm install --no-save acorn`; the output
+# directory holds generated artefacts and is uploaded by CI instead.
+es_downlevel_out/
+tools/es_downlevel/node_modules/
+tools/es_downlevel/package-lock.json

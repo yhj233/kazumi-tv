@@ -8,6 +8,7 @@ import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/network/proxy_utils.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/webview/video/video_webview_controller.dart';
+import 'package:kazumi/webview/video/js_downlevel.dart';
 import 'package:flutter_inappwebview_platform_interface/flutter_inappwebview_platform_interface.dart';
 import 'package:flutter_inappwebview_android/flutter_inappwebview_android.dart'
     as android_webview;
@@ -33,7 +34,7 @@ class VideoWebviewImpl
   /// 的子资源改由 Dio 原生取回（自带重试、并自动走应用内代理设置），再回填给
   /// WebView。对现代 WebView 无影响（它们本来就很少失败）。
   static const int _maxResourceRetries = 6;
-  static const int _maxAutoReloads = 2;
+  static const int _maxAutoReloads = 3;
   static const Duration _resourceTimeout = Duration(seconds: 10);
 
   final Set<String> _flakyHosts = <String>{};
@@ -41,6 +42,27 @@ class VideoWebviewImpl
   int _autoReloadCount = 0;
   Timer? _autoReloadTimer;
   Dio? _resourceDio;
+
+  /// ---- ES2020 JS 降级（老 WebView 的第二道坎）----
+  ///
+  /// 第一道坎（上面的原生取回）解决后，实机日志仍然超时，但这次拿到了决定性证据：
+  ///
+  ///   I chromium: [INFO:CONSOLE(7)] "Uncaught SyntaxError: Unexpected token .",
+  ///               source: .../jx/20230723ver/Play/artplayer.min.js (7)
+  ///
+  /// 用 acorn 按 ES2018（Chrome 66 的能力上限）解析该文件，报错位置完全一致：
+  ///   Unexpected token (7:147582)
+  ///   ...const r=t.$parentItem?.selector||this.option;...
+  ///
+  /// 整个 165KB 的 artplayer.min.js 里**只有这 1 处** optional chaining，但 V8 的
+  /// 解析是整文件失败 → `ArtPlayer` 从未被定义 → 播放器起不来 → 页面上永远没有
+  /// `<video>` → 嗅探 13s 超时。同一站点另外 7 个 JS 全部是 Chrome 66 兼容的。
+  ///
+  /// 所以：一旦控制台报出 `SyntaxError`，就打开降级开关并重载一次，
+  /// 此后该页面的 JS 子资源都走原生取回并做 ES2020→ES5 改写
+  /// （见 `lib/webview/video/js_downlevel.dart`，算法已用 acorn + node
+  /// 运行等价性测试验证过）。对现代 WebView 完全无影响——它根本走不到这里。
+  bool _downlevelJs = false;
 
   @override
   Future<void> init() async {
@@ -78,12 +100,16 @@ class VideoWebviewImpl
             }
           }
 
-          // B. 「不稳定 host」的子资源改由原生取回（带重试），再回填给 WebView
+          // B. 「不稳定 host」的子资源改由原生取回（带重试），再回填给 WebView；
+          //    打开 JS 降级后，脚本资源无论 host 是否不稳定都走这条路
+          final bool scriptNeedsDownlevel =
+              _downlevelJs && JsDownlevel.urlLooksLikeScript(url);
           if (!isVideoSourceLoaded &&
               (request.method ?? 'GET').toUpperCase() == 'GET' &&
               request.isForMainFrame != true &&
               !_isMediaStreamRequest(lower, request.headers) &&
-              _flakyHosts.contains(request.url.host)) {
+              (_flakyHosts.contains(request.url.host) ||
+                  scriptNeedsDownlevel)) {
             return _fetchResourceNatively(url, request.headers);
           }
           return null;
@@ -101,8 +127,17 @@ class VideoWebviewImpl
           }
         },
         onConsoleMessage: (controller, consoleMessage) {
+          final String message = consoleMessage.message;
           logEventController.add(
-              'Console [${consoleMessage.messageLevel}]: ${consoleMessage.message}');
+              'Console [${consoleMessage.messageLevel}]: $message');
+          // 老 WebView 解析不了现代语法时，控制台会报 SyntaxError。
+          // 这是「页面脚本被整体丢弃」的唯一可靠信号，用它来开启降级并重载一次。
+          if (!_downlevelJs && message.contains('SyntaxError')) {
+            _downlevelJs = true;
+            logEventController.add(
+                'WebView: 检测到脚本语法错误（老 WebView 不支持 ES2020），已开启 JS 降级');
+            _scheduleAutoReload();
+          }
         },
         onReceivedError: (controller, request, error) {
           logEventController
@@ -201,7 +236,14 @@ class VideoWebviewImpl
   Future<void> _onLoadStart() async {
     if (!useLegacyParser) {
       logEventController.add('Injecting blob parser script (onLoadStart)');
+      // 用 IIFE + 幂等守卫包起来：onLoadStart/onLoadStop 会因子 iframe 加载完成
+      // 而在同一文档里重复触发，顶层 `const` 二次声明会抛
+      // "SyntaxError: Identifier '...' has already been declared"，
+      // 导致整段注入脚本被丢弃（实机日志里确实出现过）。
       await webviewController?.evaluateJavascript(source: """
+        (function() {
+        if (window.__kazumiBlobParserInstalled) return;
+        window.__kazumiBlobParserInstalled = true;
         try { window.flutter_inappwebview.callHandler('LogBridge', 'BlobParser script loaded: ' + window.location.href); } catch(e) {}
         const _r_text = window.Response.prototype.text;
         window.Response.prototype.text = function () {
@@ -305,6 +347,7 @@ class VideoWebviewImpl
         } else {
           setupIframeListeners();
         }
+        })();
       """);
     }
   }
@@ -313,6 +356,9 @@ class VideoWebviewImpl
     if (!useLegacyParser) {
       logEventController.add('Injecting video tag parser script (onLoadStop)');
       await webviewController?.evaluateJavascript(source: """
+        (function() {
+        if (window.__kazumiVideoTagParserInstalled) return;
+        window.__kazumiVideoTagParserInstalled = true;
         window.flutter_inappwebview.callHandler('LogBridge', 'VideoTagParser script loaded: ' + window.location.href);
         const _observer = new MutationObserver((mutations) => {
           window.flutter_inappwebview.callHandler('LogBridge', 'Scanning for video elements...');
@@ -370,12 +416,16 @@ class VideoWebviewImpl
         } else {
           setupVideoProcessing();
         }
+        })();
       """);
     }
 
     if (useLegacyParser) {
       logEventController.add('Injecting JSBridgeDebug script (onLoadStop)');
       await webviewController?.evaluateJavascript(source: """
+        (function() {
+        if (window.__kazumiIframeParserInstalled) return;
+        window.__kazumiIframeParserInstalled = true;
         window.flutter_inappwebview.callHandler('LogBridge', 'JSBridgeDebug script loaded: ' + window.location.href);
         function processIframeElement(iframe) {
           window.flutter_inappwebview.callHandler('LogBridge', 'Processing iframe element');
@@ -407,6 +457,7 @@ class VideoWebviewImpl
           attributes: true,
           attributeFilter: ['src']
         });
+        })();
       """);
     }
 
@@ -532,7 +583,10 @@ class VideoWebviewImpl
         if (data == null || data.isEmpty) {
           continue;
         }
-        final bytes = data is Uint8List ? data : Uint8List.fromList(data);
+        var bytes = data is Uint8List ? data : Uint8List.fromList(data);
+        if (_downlevelJs && JsDownlevel.urlLooksLikeScript(url)) {
+          bytes = _downlevelScript(url, bytes);
+        }
         logEventController.add(
             'Native resource proxy OK: $url (${bytes.length}B, try ${attempt + 1})');
         return WebResourceResponse(
@@ -556,6 +610,22 @@ class VideoWebviewImpl
       }
     }
     return null;
+  }
+
+  /// 对脚本做 ES2020→ES5 降级；任何不确定的情况都原样返回（fail-safe）。
+  Uint8List _downlevelScript(String url, Uint8List bytes) {
+    try {
+      final Uint8List? out = JsDownlevel.downlevelBytes(bytes);
+      if (out == null) {
+        return bytes;
+      }
+      logEventController.add('WebView: JS 降级生效 $url '
+          '(${bytes.length}B -> ${out.length}B)');
+      return out;
+    } catch (e) {
+      logEventController.add('WebView: JS 降级失败（保持原样）$url ($e)');
+      return bytes;
+    }
   }
 
   String _contentTypeFor(String url, String? serverContentType) {

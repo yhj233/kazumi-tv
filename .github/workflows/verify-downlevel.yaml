@@ -1,0 +1,62 @@
+name: verify-es-downlevel
+
+# Independently verifies lib/webview/video/js_downlevel.dart - the ES2020 -> ES5
+# downleveler that lets the Android 9 (Chrome 66) TV box run modern player
+# bundles. Runs the real shipped Dart code, then checks its output with the acorn
+# parser at ecmaVersion 2018 (the grammar Chrome 66 actually implements) and
+# compares runtime behaviour against the original under node.
+#
+# Fixtures include a faithful extract of the statement that broke the AGE source
+# on the box: a single `?.` inside a 165 KB minified artplayer.min.js.
+#
+# No Flutter SDK is needed for this job - js_downlevel.dart only imports
+# dart:convert / dart:typed_data.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-es-downlevel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Show toolchain versions
+        run: |
+          dart --version
+          node --version
+
+      - name: Install acorn
+        working-directory: tools/es_downlevel
+        run: npm install --no-save --no-package-lock --no-audit --no-fund --loglevel=error
+
+      - name: Verify the downleveler
+        working-directory: tools/es_downlevel
+        run: node run_checks.js
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: es-downlevel-output
+          path: es_downlevel_out/
+          if-no-files-found: ignore
+          retention-days: 7

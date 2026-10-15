@@ -1,0 +1,8 @@
+{
+  "name": "es-downlevel-verify",
+  "private": true,
+  "description": "Independent verification of lib/webview/video/js_downlevel.dart",
+  "dependencies": {
+    "acorn": "^8.14.0"
+  }
+}

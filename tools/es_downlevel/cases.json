@@ -1,0 +1,149 @@
+{
+ "cases": [
+  {
+   "name": "opt-basic",
+   "expectChange": true,
+   "code": "const o = {a:{b:{c:1}}};\n        console.log(o?.a?.b?.c);\n"
+  },
+  {
+   "name": "opt-missing-mid",
+   "expectChange": true,
+   "code": "const o = {a:{}};\n        console.log(o?.a?.b?.c);\n"
+  },
+  {
+   "name": "opt-missing-head",
+   "expectChange": true,
+   "code": "const o = null;\n        console.log(o?.a?.b?.c);\n"
+  },
+  {
+   "name": "opt-single",
+   "expectChange": true,
+   "code": "const t = {p:{selector:'x'}};\n        console.log(t.p?.selector);\n"
+  },
+  {
+   "name": "opt-subscript",
+   "expectChange": true,
+   "code": "const o = {a:[10,20]};\n        console.log(o?.a?.[1], o.a?.[\"0\"], o?.['a']?.[0]);\n"
+  },
+  {
+   "name": "opt-call",
+   "expectChange": true,
+   "code": "let f = () => 42;\n        console.log(f?.());\n        let g = null;\n        console.log(g?.());\n"
+  },
+  {
+   "name": "opt-method-this",
+   "expectChange": true,
+   "code": "const obj = {v: 7, m() { return this.v; }};\n        console.log(obj.m?.());\n        const obj2 = {v: 9};\n        console.log(obj2.m?.());\n"
+  },
+  {
+   "name": "opt-shortcircuit-whole-chain",
+   "expectChange": true,
+   "code": "const o = {a: null};\n        console.log(o.a?.b.c);\n"
+  },
+  {
+   "name": "opt-ternary-ambiguity",
+   "expectChange": false,
+   "code": "const a = 'A';\n        console.log(a ? 1.5 : 2);\n        const b = 0;\n        console.log(b ? .5 : 2);\n"
+  },
+  {
+   "name": "opt-in-string",
+   "expectChange": false,
+   "code": "const s = \"a?.b ?? c\";\n        console.log(s, s.length);\n"
+  },
+  {
+   "name": "opt-in-regex",
+   "expectChange": false,
+   "code": "const re = /a?\\\\.b/g;\n        console.log(re.test('aXb'), 'a\\?.b'.length);\n"
+  },
+  {
+   "name": "opt-in-template",
+   "expectChange": true,
+   "code": "const x = null;\n        const s = `v=${x?.y} end`;\n        console.log(s);\n"
+  },
+  {
+   "name": "opt-after-array",
+   "expectChange": true,
+   "code": "const arr = [{k:1}];\n        console.log(arr[0]?.k, arr?.[9]?.k);\n"
+  },
+  {
+   "name": "nullish-basic",
+   "expectChange": true,
+   "code": "const a = null, b = 0, c = 1;\n        console.log(a ?? 'd', b ?? 'd', c ?? 'd');\n"
+  },
+  {
+   "name": "nullish-complex-right",
+   "expectChange": true,
+   "code": "const a = null, b = 2, c = 3;\n        console.log(a ?? b + c, b ?? c * 2);\n"
+  },
+  {
+   "name": "nullish-in-call",
+   "expectChange": true,
+   "code": "const f = (x, y) => x + '|' + y;\n        console.log(f(null ?? 'L', undefined ?? 'R'));\n"
+  },
+  {
+   "name": "nullish-in-object",
+   "expectChange": true,
+   "code": "const a = undefined, b = 5;\n        console.log(JSON.stringify({x: a ?? 1, y: b ?? 2}));\n"
+  },
+  {
+   "name": "nullish-chained",
+   "expectChange": true,
+   "code": "const a = null, b = null, c = 'z';\n        console.log(a ?? b ?? c);\n"
+  },
+  {
+   "name": "nullish-ternary",
+   "expectChange": true,
+   "code": "const a = null, b = 'B';\n        console.log((a ?? b) ? 't' : 'f', a ?? b ? 'T' : 'F');\n"
+  },
+  {
+   "name": "nullish-array-arg",
+   "expectChange": true,
+   "code": "const a = undefined;\n        console.log([a ?? 1, a ?? 2].join(','));\n"
+  },
+  {
+   "name": "logical-assign-or",
+   "expectChange": true,
+   "code": "let a = 0, b = 1;\n        a ||= 5; b ||= 5;\n        console.log(a, b);\n"
+  },
+  {
+   "name": "logical-assign-and",
+   "expectChange": true,
+   "code": "let a = 1, b = 0;\n        a &&= 7; b &&= 7;\n        console.log(a, b);\n"
+  },
+  {
+   "name": "logical-assign-nullish",
+   "expectChange": true,
+   "code": "let a = null, b = 0;\n        a ??= 'N'; b ??= 'M';\n        console.log(a, b);\n"
+  },
+  {
+   "name": "logical-assign-member",
+   "expectChange": true,
+   "code": "const o = {x: null, y: 3};\n        o.x ??= 'a'; o.y ??= 'b';\n        console.log(o.x, o.y);\n"
+  },
+  {
+   "name": "nullish-chained-3",
+   "expectChange": true,
+   "code": "const a = null, b = undefined, c = 0, d = 'D';\nconsole.log(a ?? b ?? c ?? d);\n"
+  },
+  {
+   "name": "nullish-in-template-subst",
+   "expectChange": true,
+   "code": "const a = undefined, b = 'B';\nconsole.log(`x=${a ?? b}`);\n"
+  },
+  {
+   "name": "opt-nullish-in-template",
+   "expectChange": true,
+   "code": "// the `?.` is rewritten first, then `??` wants its left operand to start\n// inside that replacement - the two rewrites overlap and need two passes.\nconst o = null;\nconsole.log(`v=${o?.a ?? 'd'}`);\n"
+  },
+  {
+   "name": "nullish-chained-in-template",
+   "expectChange": true,
+   "code": "const a = undefined, b = null, c = 'C';\nconsole.log(`x=${a ?? b ?? c}`);\n"
+  },
+  {
+   "name": "no-change-needed",
+   "expectChange": false,
+   "code": "const o = {a: 1};\n        console.log(o.a, o['a'], 1 + 2, 'x' + 'y');\n"
+  }
+ ]
+}
