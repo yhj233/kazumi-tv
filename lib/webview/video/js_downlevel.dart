@@ -408,14 +408,18 @@ class JsDownlevel {
 
       // regex literal or division
       if (c == 0x2f) {
+        // `prev` is written from inside the local `push` helper below, and a
+        // variable assigned in a closure is never type-promoted; take a final
+        // alias so the null check below actually narrows the type.
+        final _Tok? previous = prev;
         bool allowRegex = true;
-        if (prev != null) {
-          if (prev.kind == _punc) {
+        if (previous != null) {
+          if (previous.kind == _punc) {
             allowRegex = _regexAfterPunc
-                .contains(src.substring(prev.start, prev.end));
-          } else if (prev.kind == _id) {
+                .contains(src.substring(previous.start, previous.end));
+          } else if (previous.kind == _id) {
             allowRegex = _regexAfterId
-                .contains(src.substring(prev.start, prev.end));
+                .contains(src.substring(previous.start, previous.end));
           } else {
             allowRegex = false;
           }
