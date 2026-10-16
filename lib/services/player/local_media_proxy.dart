@@ -103,7 +103,7 @@ class LocalMediaProxy {
       server.listen(_handle, onError: (Object error) {
         KazumiLogger().w('LocalMediaProxy: 监听出错 | $error');
       });
-      KazumiLogger().e('LocalMediaProxy: 已就绪 http://127.0.0.1:${server.port}');
+      KazumiLogger().w('LocalMediaProxy: 已就绪 http://127.0.0.1:${server.port}');
       return server.port;
     } catch (error) {
       // 失败后清掉进行中的 Future，让后续调用可以重试。
@@ -117,21 +117,51 @@ class LocalMediaProxy {
   ///
   /// 本网络的 IPv6 出口实测质量极差（ICMPv6 可达，但 TCP 吞吐只有
   /// 0.5 KB/s 量级），而 IPv4 稳定在数 MB/s。系统的 `getaddrinfo` 默认会
-  /// 把 IPv6 排在前面，这里显式把它挪到后面。
+  /// 把 IPv6 排在前面，这里显式挑出 IPv4。
   Future<ConnectionTask<Socket>> _openConnection(
       Uri uri, String? proxyHost, int? proxyPort) async {
+    final address = await _preferredIPv4(uri.host);
+    return await _connect(address ?? uri.host, uri.port);
+  }
+
+  Future<InternetAddress?> _preferredIPv4(String host) async {
     try {
-      final addresses = await InternetAddress.lookup(uri.host);
+      final addresses = await InternetAddress.lookup(host);
       for (final address in addresses) {
         if (address.type == InternetAddressType.IPv4) {
-          return Socket.startConnect(address, uri.port,
-              timeout: _connectTimeout);
+          return address;
         }
       }
     } catch (_) {
-      // 解析失败则退回默认行为，让 HttpClient 自己产生并上报错误。
+      // 解析失败 → 退回默认行为，让 HttpClient 自己产生并上报错误。
     }
-    return Socket.startConnect(uri.host, uri.port, timeout: _connectTimeout);
+    return null;
+  }
+
+  /// 建连 + **超时保护**。
+  ///
+  /// [Socket.startConnect] 本身不接受超时参数，而放任一个黑洞 TCP 半开着，
+  /// mpv 侧看到的仍然是「永远没有任何数据」—— 与本次要修的故障形态完全一样，
+  /// 无法区分。所以这里挂一个定时器，超时直接 `cancel()` 掉这次连接。
+  Future<ConnectionTask<Socket>> _connect(dynamic host, int port) async {
+    final task = await Socket.startConnect(host, port);
+    // 拿到连接结果（成功或失败）后立刻撤掉定时器，避免误伤。
+    final timer = Timer(_connectTimeout, task.cancel);
+    unawaited(task.socket.then(
+      (_) => timer.cancel(),
+      onError: (Object _) => timer.cancel(),
+    ));
+    return task;
+  }
+
+  /// 安全地取单个头部值：`HttpHeaders.value` 在同名头部出现多次时**会抛异常**，
+  /// 这里改成用 `operator []` 再自行合并。
+  static String? _headerValue(HttpHeaders headers, String name) {
+    final values = headers[name];
+    if (values == null || values.isEmpty) {
+      return null;
+    }
+    return values.length == 1 ? values.first : values.join(', ');
   }
 
   /// 把远端媒体地址映射成本地代理地址；非 http(s) 地址原样返回。
@@ -175,6 +205,9 @@ class LocalMediaProxy {
 
   Future<void> _handle(HttpRequest request) async {
     final response = request.response;
+    // `HttpResponse` 没有 `headersSent`，自己记一个：一旦状态码/头部写出去，
+    // 出错时就只能直接断开，不能再改状态码。
+    var headersSent = false;
     try {
       final target = resolveTarget(request.uri);
       final client = _client;
@@ -190,23 +223,40 @@ class LocalMediaProxy {
         ..followRedirects = true
         ..maxRedirects = 5;
       for (final name in _forwardHeaders) {
-        final value = request.headers.value(name);
+        final value = _headerValue(request.headers, name);
         if (value != null) {
           upstreamRequest.headers.set(name, value);
         }
       }
       final upstreamResponse = await upstreamRequest.close();
+      final upstreamHeaders = upstreamResponse.headers;
       response.statusCode = upstreamResponse.statusCode;
       for (final name in _passThroughHeaders) {
-        final value = upstreamResponse.headers.value(name);
+        // `Content-Length` 不能走 `headers.set`（dart:io 会拒绝），
+        // 必须落到 `response.contentLength` 上，见下方。
+        if (name == HttpHeaders.contentLengthHeader) {
+          continue;
+        }
+        final value = _headerValue(upstreamHeaders, name);
         if (value != null) {
           response.headers.set(name, value);
         }
       }
+      // 与上游严格一致的长度，mpv 才能算出正确的字节偏移。
+      // 上游用 chunked 时拿不到长度，就交给 dart:io 自己决定分块。
+      final contentLength = upstreamHeaders.contentLength;
+      if (contentLength >= 0 &&
+          !upstreamHeaders.chunkedTransferEncoding &&
+          upstreamResponse.statusCode != HttpStatus.noContent &&
+          upstreamResponse.statusCode != HttpStatus.notModified) {
+        response.contentLength = contentLength;
+      }
+      headersSent = true;
       await upstreamResponse.pipe(response);
     } catch (error) {
+      KazumiLogger().w('LocalMediaProxy: 转发失败 | $error');
       try {
-        if (!response.headersSent) {
+        if (!headersSent) {
           response.statusCode = HttpStatus.badGateway;
         }
         await response.close();
