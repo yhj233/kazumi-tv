@@ -13,6 +13,7 @@ import 'package:kazumi/utils/constants.dart';
 import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/services/network/proxy_utils.dart';
 import 'package:kazumi/services/network/system_proxy_service.dart';
+import 'package:kazumi/services/player/local_media_proxy.dart';
 import 'package:kazumi/services/player/playback_cache_policy.dart';
 import 'package:kazumi/services/player/player_error_mapper.dart';
 import 'package:kazumi/services/storage/storage.dart';
@@ -251,6 +252,24 @@ abstract class _PlayerPlaybackController with Store {
     return false;
   }
 
+  /// 返回真正交给 mpv 的地址：优先映射到 [LocalMediaProxy]，让 HTTPS 走系统
+  /// TLS 栈，绕开 libmpv 自带 mbedtls 在部分 CDN 上握手卡死的问题。
+  ///
+  /// 代理不可用时**静默回退直连**，保证任何设备都不会因为这条链路而比改动前更差。
+  /// 日志里继续使用 [videoUrl] 的原始地址，避免诊断信息被 `127.0.0.1` 掩盖。
+  Future<String> _playbackUrl() async {
+    final raw = videoUrl();
+    if (raw.isEmpty) {
+      return raw;
+    }
+    try {
+      return await LocalMediaProxy.instance.map(raw);
+    } catch (error) {
+      KazumiLogger().w('PlayerController: 本地媒体代理不可用，回退直连 | $error');
+      return raw;
+    }
+  }
+
   /// 解码器初始化失败 → 立即 `hwdec=no` 并重开媒体。
   ///
   /// 只做一次：软解若仍然失败，说明问题不在解码器，交给看门狗/页面兜底。
@@ -263,7 +282,7 @@ abstract class _PlayerPlaybackController with Store {
       return;
     }
     _decoderRecoveryStarted = true;
-    final uri = videoUrl();
+    final uri = await _playbackUrl();
     if (uri.isEmpty) {
       return;
     }
@@ -507,7 +526,7 @@ abstract class _PlayerPlaybackController with Store {
     // 请求头表（见 media_kit real.dart 的 MPV_EVENT_HOOK 分支），与加载方式无关。
     if (!decodeStall && !_directLoadRetried) {
       _directLoadRetried = true;
-      final uri = videoUrl();
+      final uri = await _playbackUrl();
       if (uri.isNotEmpty) {
         try {
           final pp = player.platform as NativePlayer;
@@ -548,8 +567,9 @@ abstract class _PlayerPlaybackController with Store {
           return;
         }
         KazumiLogger().e('PlayerController: 已切换为软解并重新打开');
+        final reopenUri = await _playbackUrl();
         final reopenFuture = player.open(
-          Media(videoUrl(),
+          Media(reopenUri,
               start: Duration(seconds: startOffset),
               httpHeaders: _lastHttpHeaders),
           play: autoPlay,
@@ -958,8 +978,17 @@ abstract class _PlayerPlaybackController with Store {
       unawaited(_dumpMpvDiagnostics(player, 'before-open'));
 
       final openStopwatch = Stopwatch()..start();
+      // ★ 交给 mpv 的是**本地代理地址**（若代理可用）。这样 mpv 只跟
+      // 127.0.0.1 说明文 HTTP，真正的 HTTPS 由 Dart 的 HttpClient 完成 ——
+      // 即系统 TLS 栈。实机已证明同一个 URL 走系统 TLS 能跑到 2~6 MB/s，
+      // 而 libmpv 自带的 mbedtls 会握手 217 秒后 `CONN_EOF` 失败。
+      final mediaUri = await _playbackUrl();
+      if (mediaUri != videoUrl()) {
+        KazumiLogger().e(
+            'PlayerController: 已切换到本地媒体代理（TLS 交给系统栈）| $mediaUri');
+      }
       final openFuture = player.open(
-        Media(videoUrl(),
+        Media(mediaUri,
             start: Duration(seconds: offset), httpHeaders: httpHeaders),
         play: autoPlay,
       );
