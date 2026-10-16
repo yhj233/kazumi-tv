@@ -922,3 +922,190 @@ UI 因为 `playback.loading = false` 而离开转圈、露出黑色 `Video` 组�
    `[ffmpeg/video]` 类解码错误完全在盲区）；
 4. 起播看门狗（解复用 18s / 解码 28s）+ 软解重开 + 页面重新解析视频源；
 5. 受限设备（`MemTotal < 3GB`）把 demuxer 缓存从 1500MB 收到 96MB。
+
+---
+
+## 2026-10-16 关键校正：`online playback` / `video initialized` 的归属（推翻上一轮推断）
+
+上一轮把 `PlayerController: online playback, url: ...`（01:48:56.361）与
+`PlayerController: video initialized`（01:48:56.740）误读为「`open()` 已返回」的证据。
+实测源码定位后确认：
+
+- `lib/pages/player/player_controller.dart:181`
+  `'PlayerController: ${params.isLocalPlayback ? "local" : "online"} playback, url: ${params.videoUrl}'`
+- `lib/pages/player/player_controller.dart:273` `'PlayerController: video initialized'`（274 行紧接 `playback.loading = false;`）
+
+**两条日志同在 `init()` 内部（181 → 273 相隔 379ms），`init()` 只负责「创建 player /
+VideoController / 音量」，与「打开媒体」无关。** `open()` 在这两个版本里**没有任何日志**，
+所以 build44 的现场日志**根本看不到 `open()` 的执行状态**。上一轮据此得出的
+「open 未返回 ⇒ 事件泵死锁」结论**不成立**，必须重来。
+
+## 2026-10-16 关键校正：media-kit 源码版本错配
+
+分析用的 `mk_real.dart`（99869 B）与仓库实际依赖的版本**不是同一份**：
+
+| | 缓存 mk_real.dart | 实际 main 分支 real.dart |
+|---|---|---|
+| 大小 | 99869 B | **90345 B** |
+| 事件循环 | `PlayerIsolate` 旧机制 | **`NativeEventLoop`（`core/native_event_loop.dart`）** |
+| `Initializer` | 有（`core/initializer.dart`） | **无，该文件在仓库中不存在** |
+| `NativeEventLoop` 出现次数 | 0 | 2 |
+
+⇒ 上一轮基于旧版得出的 `_command` / `Completer` / `await future` 时序推断**整体作废**，
+已改用 API contents(base64) 拉取的当前版本重新分析。
+
+### 当前版本（90345 B）实测结构
+
+- `open()`：137-215 行，与旧版**逻辑一致**：
+  `stop(open:true)` → `pause=yes` → `TempFile.create()`(186) →
+  `_command(['loadlist', file.path, 'append'])`(195) →
+  `Future.delayed(5s)` 删除该文件 → `pause=no` → `playlist-pos=index`(213)
+- `_command()`：2409-2440，`configuration.async` 默认 **true** ⇒ `mpv_command_async` +
+  `await _commandRequests[reply_userdata].future`，**必须靠事件泵投递
+  `MPV_EVENT_COMMAND_REPLY` 才能返回**。
+- `_handler()`：1255-2084，内部仅有 5 个 await 点：
+  `1267 await future`（idle-active）、`1474 calculateBitrate`、`1874 fn.call`、
+  `1940/2034 hook.call()`。
+- `_create()`：2085-2256。`2182 await Future.wait(25 个 _setPropertyString)`，
+  之后 `2220-2225` observeProperties（**含 `idle-active`，2217 行**）、
+  `2227-2249` log level + hook_add，**2226-2256 之间没有任何 await**。
+
+**⇒ 关键推论**：`idle-active` 的 CHANGE 事件不可能在 `_create()` 中途被处理
+（observe 之后到 return 是纯同步段），只能在 `_create()` 返回后处理，
+此时 `future` 已完成 ⇒ `1267 await future` 立即返回 ⇒ **初始化链路不存在死锁**。
+
+## 2026-10-16 关键校正：`pl_*` 文件的真实来源
+
+`capture3.sh` 会遍历 `/data/data/com.predidit.kazumi/files` 下**所有非 `*.hive`/`*.lock`
+文件**并拷成 `pl_<原文件名>`（所以 `pl_libCachedImageData.db` 这类无关文件也混在里面）。
+⇒ UUID 命名的 `pl_badca587-...`(165B) / `pl_ee47ab78-...`(146B) 确实是
+`TempFile.create()` 的产物，内容为单个 HTTPS 直链 + 换行。
+
+`TempFile.create()` 在 `open()` 中只有一处（第 186 行），另一处（1013 行）属
+`setSubtitleTrack` 且只在 `track.data` 非空时触发（内容是字幕、不是视频 URL）。
+**⇒ 这两个文件唯一可能的来源就是 `open()` 第 186 行
+⇒ `open()` 已越过第 155 行 `waitForPlayerInitialization`（初始化已完成）
+⇒ 卡点在其后的第 195 行 `_command(['loadlist'])`。**
+
+**旁证**：`open()` 第 197 行 `Future.delayed(5s, () => file.delete_())` 在
+`await _command(loadlist)` **之后**才注册。文件从 01:48 一直残留到 02:16（28 分钟），
+说明**该删除回调从未被注册** ⇒ `open()` 确实停在 195 行的 await 上。
+
+## 2026-10-16 对「高内存占用」假设的评估（用户提出）
+
+- media-kit 无条件 `cache-on-disk: yes`（real.dart:2143），且
+  `demuxer-max-bytes` = `demuxer-max-back-bytes` = `bufferSize`（2162-2163）。
+  Kazumi 传 1500MB ⇒ **实际预算 3GB**，在 2GB 盒子上确属隐患（build45 已收到 96MB）。
+- **但它不是本次「不出画面」的原因**：卡死期间无内存压力、无块设备 IO 增长，
+  mpv 的 `vo`/`opener`/`worker` 线程累计 CPU 恒为 0.00s —— 一个字节都没读。
+- 另外上一轮用 `/proc/<pid>/io` 的 **`read_bytes`** 判断「无 IO」在方法上是错的：
+  该字段只统计**块设备**读取，**不含 socket 流量**。此项结论已作废，不再作为依据。
+
+---
+
+## 2026-10-16 11:2x 现场取证（tv-build-45 实机）——推翻「mpv 从不加载媒体」
+
+### 0. 关键工具发现：应用自带日志文件
+
+`/data/data/com.predidit.kazumi/files/logs/kazumi_logs.log`（`KazumiLogger`）里**含有
+logcat 中看不到的 `MPV:` 行**——因为 `playerDebugMode=true` 会以 `forceLog` 旁路级别过滤。
+
+**但 `KazumiLogOutput.output()`（lib/services/logging/logger.dart:121）只在
+`level >= Level.warning` 或 forceLog 时才写文件**，所以 `WebViewVideoSource: loadUrl=`
+这类 INFO 行**只存在于 logcat（`print` → `I/flutter`）**。
+⇒ 以后排查：**logcat 找 INFO，`kazumi_logs.log` 找 WARNING/ERROR + MPV**。
+
+### 1. 推翻结论：mpv 一直在工作，`loadlist` 成功
+
+build44 的 `kazumi_logs.log`（01:30:13–01:30:29）逐行：
+
+```
+01:30:13.253 MPV: playlist      warn  Reading plaintext playlist.
+01:30:13.260 MPV: cplayer       info  Playing: https://v16-livesaas-vod.bytepluscdn.com/...
+01:30:24.033 MPV: cplayer       info  ● Video --vid=1 (h264 1920x1080 23.976 fps 1344 kbps) [default]
+01:30:24.034 MPV: cplayer       info  ● Audio --aid=1 (aac 2ch 44100 Hz 64 kbps) [default]
+01:30:24.037 MPV: ffmpeg/video  error h264_mediacodec: Both surface and native_window are NULL
+01:30:24.137 MPV: ffmpeg/video  error h264_mediacodec: Output color format 0x2f (value=47) is not supported
+01:30:24.139 MPV: ffmpeg/video  error h264_mediacodec: Failed to configure context
+01:30:24.140 MPV: ffmpeg/video  error h264_mediacodec: MediaCodec 0x9ad0ed80 failed to start
+01:30:24.311 MPV: vd            error Could not open codec.
+01:30:25.469 MPV: cplayer       info  AO: [opensles] 44100Hz stereo 2ch float
+01:30:25.671 MPV: cplayer       info  VO: [gpu] 1920x1080 yuv420p
+01:30:29.631 MPV: cplayer       warn  Audio/Video desynchronisation detected!
+```
+
+**⇒ `loadlist` 完全成功、解复也成功**：`open()` 没有卡在 `_command(['loadlist'])`，
+「事件泵死锁 / 播放列表为空」的推断**作废**（连同据此设计的 `loadfile` 直开兜底一并作废）。
+
+**真实的两层问题**：
+1. **硬件解码在这台盒子上是坏的**：`h264_mediacodec` 拿不到 Surface
+   （`Both surface and native_window are NULL`），且该 SoC 的 MediaCodec 不支持
+   解码器输出色彩格式 `0x2f` → `MediaCodec failed to start` → `vd: Could not open codec.`。
+   每集都会先记 3~5 条 ERROR，然后 mpv 自己退回软解（`VO: [gpu] ... yuv420p`）。
+2. **1080p 软解跟不上** → `Audio/Video desynchronisation detected!`（mpv 还建议
+   `--profile=fast` / `--hwdec=auto`）。
+
+### 2. 用户可见症状 = 解析超时（已稳定复现）
+
+```
+01:29:23.846 ERROR WebViewVideoSource: TIMEOUT 13s, no video source sniffed | url=https://www.agedm.io/play/20260260/1/1 | legacy=false
+01:32:31.166 ERROR WebViewVideoSource: TIMEOUT 13s, no video source sniffed | url=https://www.agedm.io/play/20260260/1/1 | legacy=false
+11:34:52.847 ERROR WebViewVideoSource: TIMEOUT 14s, no video source sniffed | url=https://www.2kdm.com/vodplay/3135-2-1.html | legacy=false
+```
+
+### 3. 直取（DirectVideoSourceResolver）对 AGE 天然不可能命中
+
+盒子**直连** `https://www.agedm.io/play/20260260/1/1`：`http=200 size=52039
+ip=23.224.60.155 total=1.45s`（网络没问题）。但页面 HTML 里：
+- `player_aaaa` 0 次、`ArtPlayer` 0 次、无任何 m3u8 地址；
+- 只有 `playlist-source-ffm3u8/bfzym3u8/wjm3u8/lzm3u8` 这类**标签**；
+- 播放器由 `xcdn.khfed.com:8443/age/statics/js/template-web.js` 前端模板渲染，
+  媒体地址靠**页面 JS 发 XHR** 才拿到。
+
+⇒ 静态 HTML 里没有可提取的媒体地址，直取必然 miss，只能落到 WebView 嗅探。
+这也解释了为什么 build43/44 的「原生直取优先」在该站上等于没生效。
+
+### 4. WebView 在盒子上的真实失败（以 2kdm 为证，11:34 现场）
+
+```
+11:34:43.142 WebView: Console [ERROR]: Uncaught SyntaxError: Unexpected token if
+11:34:43.919 WebView: Console [ERROR]: Uncaught ReferenceError: globalThis is not defined
+11:34:52.301 WebView: Timer scan: found 0 video element(s)
+11:34:52.847 WebViewVideoSource: TIMEOUT 14s, no video source sniffed
+```
+
+离线复算（acorn ecmaVersion 2018，`tmpwork/find_syntax.js`）：该页 **14 个内联 script
+中有 2 个在 ES2018 下解析失败**，报错点与 Chrome 66 完全一致。
+
+- `globalThis` 是 **ES2020 运行时全局**，Chrome 71+ 才有。我们的 `js_downlevel.dart`
+  只做**语法**改写，不补运行时全局 ⇒ 这一条必然漏。**可修：注入 `globalThis` polyfill。**
+- `Unexpected token if` 是**站点自己的 bug**：2kdm 把整个 HTML 压成**零换行**
+  （实测 `换行数 0`），于是 `let cookieItem = getCookieItem('mx_style')` 后直接跟 `if(...)`
+  ——ASI 规则要求「换行 + 该 token 不被语法接受」，没有换行就不插入分号 ⇒ 真实语法错误，
+  现代浏览器同样会挂。**不是我们代码的问题。**
+
+### 5. 架构缺口：主文档内联脚本永远不会被降级
+
+`video_webview_impl.dart:125-132` 的拦截条件里有 `request.isForMainFrame != true`，
+⇒ 主文档（及其**内联** `<script>`）不走原生取回、也不走降级，只有外部 `.js` 子资源会。
+实测本轮 **28 个 .js 全部命中 `Native resource proxy OK`**，主文档 0 次。
+
+### 6. 降级开关状态确认
+
+`_downlevelJs` 默认 `true`（:80），由 `_probeEs2020Support()`（:196）探测后决定；
+Chrome 66 必然缺 `?.`/`??` ⇒ `probes.contains('0')` 为真 ⇒ 保持打开。
+**证据**：所有 .js 都走了原生代理（`scriptNeedsDownlevel = _downlevelJs && urlLooksLikeScript`）。
+⚠️ 但 `_probeEs2020Support()` 的 `logEventController.add(...)` 发生在
+`WebViewVideoSourceService` 订阅 `onLog` **之前**（订阅在 `await init()` 之后）
+⇒ **探测结果日志被整体丢弃**，排查时看不到。**这是需要修的日志盲区。**
+
+### 7. 网络环境事实（盒子实测，PC 侧不可信）
+
+- 盒子 DNS：`223.5.5.5 / 180.184.1.1 / 8.8.8.8` + `fe80::1%wlan0`。
+- 盒子直连可达：`www.agedm.io`(200)、6 个 CDN 域名(403)、`api.kazumi.fyi`(404，慢)。
+- **稳定不可达**：`dmbus.cc`、`api.xifanacg.com` —— TLS 直接 `SSL_ERROR_SYSCALL`，
+  在 -4/-6 下都失败 ⇒ **DM84 / xfdmnext 两个源在这台盒子上根本不可用**。
+- DNS 偶发 `Failed host lookup`（5 个源并发搜索时出现，如 11:30:35 的 `www.agedm.io`）。
+- **IPv6 假设排除**：源站与 CDN 均无 AAAA（`curl -6` 报 `Could not resolve host`）。
+- **★ 本机 PC 的测速全部作废**：PC 走了本地代理（`curl -w %{remote_ip}` 返回
+  `127.0.0.1`），网络结论一律以盒子为准。

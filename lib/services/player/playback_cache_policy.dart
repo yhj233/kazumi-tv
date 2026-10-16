@@ -23,11 +23,17 @@ class PlaybackCachePolicy {
   /// 受限设备单侧缓存上限（前向 + 回退都取该值）。
   ///
   /// media_kit 会把 bufferSize 同时写到 `demuxer-max-bytes` 和
-  /// `demuxer-max-back-bytes`，所以实际预算是它的两倍。默认的 1500 MB 意味着
-  /// 在 2 GB 内存的电视盒子上 mpv 会一路读到接近物理内存上限：实测该设备
-  /// `MemTotal=2 GB / MemAvailable≈0.9 GB`，起播时正是长期无画面、零流量的
-  /// 状态。收到 96 MB 后缓存行为正常，网络读取也不再被内存压力干扰。
-  static const int _constrainedBufferSize = 96 * 1024 * 1024;
+  /// `demuxer-max-back-bytes`，所以实际预算是它的两倍。
+  ///
+  /// ⚠️ 历史教训（tv-build-45）：曾经把这里收到 **96 MB**，思路是「2 GB 盒子上
+  /// 1500 MB×2 的预算过大」。实机（安卓 9 盒子 `MGV3201-ZG`）结果是**每一集都
+  /// 完全不出画面**：mpv 起播后 `duration` 恒为 0，`demuxer` 一直读不到数据，
+  /// 而同一个直链在盒子上用 curl 取（任何 UA / 有无 Range）都秒回 `206 video/mp4`。
+  /// 说明瓶颈不在网络，而在 mpv 的 demuxer 缓存预算被压得太小 —— 与
+  /// `cache-on-disk=yes` 叠加后 demuxer 无法正常预读。
+  /// **因此这里不再压到 100 MB 量级**，改用 256 MB（=实际 512 MB 预算），
+  /// 既远低于 2 GB 设备的物理上限，又足以让 demuxer 正常工作。
+  static const int _constrainedBufferSize = 256 * 1024 * 1024;
 
   final bool Function() _isLocalPlayback;
   final Player? Function() _currentPlayer;
@@ -120,9 +126,24 @@ class PlaybackCachePolicy {
         final size = bufferSize.toString();
         await pp.setProperty('demuxer-max-bytes', size);
         await pp.setProperty('demuxer-max-back-bytes', size);
+        // 受限设备（典型：2 GB 的安卓电视盒子）额外**关掉磁盘缓存**。
+        //
+        // media_kit 在 `_create()` 里无条件 `cache-on-disk=yes`，而 Kazumi 又把
+        // `demuxer-cache-dir` 指到应用私有目录；这一组合在部分旧固件上会让
+        // demuxer 无法正常预读（实机现象：起播后 `duration` 恒为 0、mpv 零流量，
+        // 而同一 URL 用 curl 秒回 `206 video/mp4`）。关掉磁盘缓存后 mpv 只走
+        // 内存缓存，配合上面的 256 MB 上限，内存占用可控。
+        if (isConstrainedDevice) {
+          await pp.setProperty('cache-on-disk', 'no');
+        }
+        // 老设备上 CDN 首包偶发偏慢，media_kit 默认 `network-timeout=5` 偏紧。
+        await pp.setProperty('network-timeout', '60');
       });
-      KazumiLogger().i(
-          'PlaybackCachePolicy: demuxer 缓存上限 $bufferSize 字节 (MemTotal=${_deviceMemTotalKb() ?? -1} KB)');
+      KazumiLogger().e(
+          'PlaybackCachePolicy: demuxer 缓存上限 $bufferSize 字节 '
+          '(MemTotal=${_deviceMemTotalKb() ?? -1} KB, '
+          '受限设备=$isConstrainedDevice, cache-on-disk=${isConstrainedDevice ? 'no' : 'yes(media_kit 默认)'}, '
+          'network-timeout=60)');
     } catch (e) {
       KazumiLogger().w(
         'PlaybackCachePolicy: failed to apply demuxer cache size',

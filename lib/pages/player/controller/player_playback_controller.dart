@@ -107,6 +107,10 @@ abstract class _PlayerPlaybackController with Store {
   /// 直接投喂 URL 是唯一能绕开这条链路的办法。
   bool _directLoadRetried = false;
 
+  /// 本次会话是否已经因「解码器初始化失败」而立即切过软解（见
+  /// [_recoverFromDecoderFailure]）。只做一次，避免和看门狗互相触发成环。
+  bool _decoderRecoveryStarted = false;
+
   /// 已上报过的 mpv 错误文本，避免同一错误重复弹提示。
   final Set<String> _reportedPlayerErrors = <String>{};
 
@@ -183,6 +187,115 @@ abstract class _PlayerPlaybackController with Store {
     _startupWatchdog = null;
   }
 
+  /// 解码器初始化失败的特征串。
+  ///
+  /// 本机（安卓 9 盒子 MGV3201-ZG）每次起播必现：
+  ///   `h264_mediacodec: Both surface and native_window are NULL`
+  ///   `h264_mediacodec: Output color format 0x2f (value=47) is not supported`
+  ///   `h264_mediacodec: MediaCodec 0x... failed to start`
+  ///   `vd: Could not open codec.`
+  /// 即该 SoC 的 MediaCodec 硬解不可用。命中后**立即**切软解，不再等 18 秒看门狗。
+  static const List<String> _decoderFailureMarkers = <String>[
+    'Could not open codec',
+    'mediacodec',
+    'Failed to configure context',
+    'Output color format',
+    'native_window are NULL',
+    'Failed to start',
+  ];
+
+  bool _looksLikeDecoderFailure(String text) {
+    final lower = text.toLowerCase();
+    for (final marker in _decoderFailureMarkers) {
+      if (lower.contains(marker.toLowerCase())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// 值得落盘的 mpv **非错误**日志前缀。
+  ///
+  /// mpv 在 `v` 级下输出极多（逐帧/逐包级别的噪声），全量落盘会淹没日志。
+  /// 这里只保留能直接回答「起播为什么没画面」的几类：
+  /// - `cplayer`：`Playing:`、`● Video/Audio ...`、`VO:`、`AO:`、缓冲/失同步告警
+  /// - `vd` / `ao` / `vo`：解码器、音频输出、视频输出的初始化
+  /// - `demuxer` / `stream` / `tls` / `http` / `ffmpeg`：网络与解复用
+  /// - `playlist` / `opener` / `file` / `cache`：媒体加载链路
+  static const List<String> _mpvInfoPrefixes = <String>[
+    'cplayer',
+    'vd',
+    'ao',
+    'vo',
+    'demuxer',
+    'stream',
+    'tls',
+    'http',
+    'ffmpeg',
+    'playlist',
+    'opener',
+    'file',
+    'cache',
+  ];
+
+  bool _worthLoggingMpvInfo(String prefix) {
+    final p = prefix.trim().toLowerCase();
+    if (p.isEmpty) {
+      return false;
+    }
+    for (final want in _mpvInfoPrefixes) {
+      if (p.startsWith(want)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// 解码器初始化失败 → 立即 `hwdec=no` 并重开媒体。
+  ///
+  /// 只做一次：软解若仍然失败，说明问题不在解码器，交给看门狗/页面兜底。
+  Future<void> _recoverFromDecoderFailure(String text) async {
+    if (_decoderRecoveryStarted) {
+      return;
+    }
+    final player = mediaPlayer;
+    if (player == null || !isCurrentPlayer(player)) {
+      return;
+    }
+    _decoderRecoveryStarted = true;
+    final uri = videoUrl();
+    if (uri.isEmpty) {
+      return;
+    }
+    try {
+      final pp = player.platform as NativePlayer;
+      KazumiLogger()
+          .e('PlayerController: 检测到解码器初始化失败，立即切换软解重开 | $text');
+      await pp.setProperty('hwdec', 'no');
+      if (!isCurrentPlayer(player)) {
+        return;
+      }
+      final reopenFuture = player.open(
+        Media(uri,
+            start: Duration(seconds: startOffset),
+            httpHeaders: _lastHttpHeaders),
+        play: autoPlay,
+      );
+      await Future.any<bool>([
+        reopenFuture.then((_) => true).catchError((Object _) => true),
+        Future<bool>.delayed(const Duration(seconds: 30), () => false),
+      ]);
+      if (!isCurrentPlayer(player)) {
+        return;
+      }
+      _startupRecoveryDone = false;
+      _softDecodeRetried = true;
+      _startStartupWatchdog(player);
+    } catch (e) {
+      KazumiLogger().w('PlayerController: 解码器失败后软解重开失败', error: e);
+    }
+  }
+
   /// mpv 错误的统一出口：去重 → 映射为可读提示 → 弹提示。
   ///
   /// 过去只有在 [PlayerErrorMapper] 命中时才会提示，而它不识别
@@ -191,6 +304,10 @@ abstract class _PlayerPlaybackController with Store {
   void _handlePlayerError(String text, {required bool showRawWhenUnmapped}) {
     if (text.isEmpty) {
       return;
+    }
+    // 解码器初始化失败：**立即**切软解重开（不依赖 18 秒看门狗）。
+    if (_looksLikeDecoderFailure(text)) {
+      unawaited(_recoverFromDecoderFailure(text));
     }
     final bool firstTime = _reportedPlayerErrors.add(text);
     if (!firstTime) {
@@ -265,30 +382,88 @@ abstract class _PlayerPlaybackController with Store {
   /// 出问题时单看 Dart 侧状态（duration/width 全是 0）无法区分
   /// 「播放列表为空」「解码器起不来」「CDN 拒绝直链」。
   ///
-  /// `print-text` 会做属性展开，输出走 mpv 的 info 级日志 → 被媒体的日志流
-  /// 收到（见 `player.stream.log` 的 KAZUMI-DIAG 分支），因此在真机上能
-  /// 直接把 mpv 的内部状态写进 logcat。
+  /// 直接向 mpv **同步**查询内部状态（`mpv_get_property_string`），绕开事件泵。
+  ///
+  /// ⚠️ 教训（tv-build-45）：这里原先用 `print-text` 输出诊断，结果一条都没看到，
+  /// 当时据此推断「media_kit 只转发 error 级日志」—— **这个推断是错的**。
+  /// 真实情况见 media_kit `real.dart` 的 `MPV_EVENT_LOG_MESSAGE` 分支：它把
+  /// **所有级别**的日志都无条件 `logController.add`，只有 `player.stream.error`
+  /// 才是过滤过的（仅 file / `tcp:` 开头的 ffmpeg / vd / ad / cplayer / stream）。
+  /// 也就是说我们**本来就能收到** `Playing:` / `VO:` / `AO:` 那些行，是
+  /// `player.stream.log` 的订阅端自己把它们挡掉了（已在该处一并修掉）。
+  ///
+  /// 即便如此，诊断仍以本方法为准：`getProperty` 是同步 C API，既不依赖事件
+  /// 通道、也不依赖日志级别，结果一定拿得到。
+  ///
+  /// 另外这里刻意用 **error** 级写日志：`KazumiLogOutput` 只在 WARNING 及以上
+  /// 才落盘，否则一旦 `playerDebugMode` 关掉就又看不见了。
+  ///
+  /// `waitForInitialization: false` 是必须的 —— 诊断往往正是在「初始化/起播
+  /// 卡住」时调用，若它自己去 await 初始化，就会连诊断一起卡住。
   Future<void> _dumpMpvDiagnostics(Player player, String tag) async {
     if (!isCurrentPlayer(player)) {
       return;
     }
     try {
       final pp = player.platform as NativePlayer;
-      await pp.command([
-        'print-text',
-        'KAZUMI-DIAG[$tag] '
-            r'idle-active=${idle-active} '
-            r'playlist-pos=${playlist-pos} '
-            r'playlist-count=${playlist-count} '
-            r'pause=${pause} '
-            r'duration=${duration} '
-            r'width=${width} '
-            r'vo=${vo} '
-            r'vid=${vid} '
-            r'path=${path}',
-      ]);
+      const keys = <String>[
+        'idle-active',
+        'playlist-count',
+        'playlist-pos',
+        'path',
+        'stream-open-filename',
+        'file-format',
+        'duration',
+        'width',
+        'height',
+        'vid',
+        'aid',
+        'vo-configured',
+        'core-idle',
+        'paused-for-cache',
+        'cache-buffering-state',
+        'eof-reached',
+        'hwdec-current',
+      ];
+      final parts = <String>[];
+      for (final key in keys) {
+        String value;
+        try {
+          value = await pp.getProperty(key, waitForInitialization: false);
+        } catch (_) {
+          value = 'ERR';
+        }
+        parts.add('$key=${value.isEmpty ? '(empty)' : value}');
+      }
+      KazumiLogger().e('PlayerController: MPV 诊断[$tag] ${parts.join(' ')}');
     } catch (e) {
-      KazumiLogger().w('PlayerController: mpv 诊断输出失败', error: e);
+      KazumiLogger().w('PlayerController: mpv 诊断读取失败', error: e);
+    }
+  }
+
+  /// 给「可能永久挂起」的 mpv 命令加软超时。
+  ///
+  /// media_kit 的 `command()` 实现是 `mpv_command_async` + `await
+  /// MPV_EVENT_COMMAND_REPLY`：一旦事件泵或命令通道卡住，这个 Future **永远不会
+  /// 完成**。恢复阶梯里若直接 `await` 它，整个自愈流程会跟着一起卡死 ——
+  /// 这正是「卡死后完全没有自救」的另一半原因。
+  ///
+  /// 超时后把原 Future 的异常也消费掉，避免出现「未处理的 Future 错误」。
+  Future<void> _commandWithTimeout(
+    NativePlayer pp,
+    List<String> command, {
+    required String label,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final future = pp.command(command);
+    try {
+      await future.timeout(timeout);
+    } on TimeoutException {
+      unawaited(future.catchError((Object _) {}));
+      KazumiLogger().w(
+          'PlayerController: $label 命令 ${timeout.inSeconds}s 未返回（mpv 命令通道可能已卡住）');
+    } catch (e) {
+      KazumiLogger().w('PlayerController: $label 命令失败', error: e);
     }
   }
 
@@ -320,19 +495,34 @@ abstract class _PlayerPlaybackController with Store {
     //
     // 请求头不受影响：media_kit 的 `on_load` 钩子是用 URI 回查 `Media` 的静态
     // 请求头表（见 media_kit real.dart 的 MPV_EVENT_HOOK 分支），与加载方式无关。
+    // 阶段零：解复用阶段完全没有数据（`duration` 恒为 0）—— 先排除缓存/网络因素，
+    // 再绕过 media_kit 的临时播放列表文件，直接让 mpv `loadfile`。
+    //
+    // 实机（安卓 9 盒子）已确证：此时直链本身完全可用 —— 在盒子上用 curl 取同一个
+    // URL（任意 UA、有无 Range、HTTP/1.1）都秒回 `206 video/mp4`，甚至无 Range 时
+    // 15 秒能拉 68 MB。所以瓶颈不在网络与 CDN，而在 mpv 的 demuxer 侧。
+    // `cache-on-disk` + `demuxer-cache-dir` 的组合是老固件上最可疑的一环，先关掉。
+    //
+    // 请求头不受影响：media_kit 的 `on_load` 钩子是用 URI 回查 `Media` 的静态
+    // 请求头表（见 media_kit real.dart 的 MPV_EVENT_HOOK 分支），与加载方式无关。
     if (!decodeStall && !_directLoadRetried) {
       _directLoadRetried = true;
       final uri = videoUrl();
       if (uri.isNotEmpty) {
         try {
           final pp = player.platform as NativePlayer;
-          await pp.command(['loadfile', uri]);
+          try {
+            await pp.setProperty('cache-on-disk', 'no');
+            await pp.setProperty('network-timeout', '60');
+          } catch (_) {}
+          await _commandWithTimeout(pp, ['loadfile', uri], label: 'loadfile');
           if (!isCurrentPlayer(player)) {
             return;
           }
-          await pp.command(['set', 'pause', 'no']);
-          KazumiLogger().i(
-              'PlayerController: 已改用 loadfile 直接打开媒体（绕过播放列表文件）');
+          await _commandWithTimeout(pp, ['set', 'pause', 'no'],
+              label: 'pause-off');
+          KazumiLogger().e(
+              'PlayerController: 已改用 loadfile 直接打开媒体（绕过播放列表文件 + 关闭磁盘缓存）');
           // 允许这一次重开后的第二轮看门狗继续升级到「重新解析视频源」。
           _startupRecoveryDone = false;
           _startStartupWatchdog(player);
@@ -346,7 +536,9 @@ abstract class _PlayerPlaybackController with Store {
     // 阶段一：切换为软解后重开。
     // 本机实测 MediaCodec 初始化失败（surface/native_window 为 NULL、P010 输出
     // 不受支持）后 mpv 可能长时间没有任何输出，软解是唯一能出画面的路径。
-    if (decodeStall && !_softDecodeRetried) {
+    // 条件里**不再要求** `decodeStall`：`duration=0`（连解复用都没开始）时硬解
+    // 也可能已经把 vod 管线卡住，同样值得换软解重开一次。
+    if (!_softDecodeRetried) {
       _softDecodeRetried = true;
       try {
         final pp = player.platform as NativePlayer;
@@ -354,13 +546,18 @@ abstract class _PlayerPlaybackController with Store {
         if (!isCurrentPlayer(player)) {
           return;
         }
-        KazumiLogger().i('PlayerController: 已切换为软解并重新打开');
-        await player.open(
+        KazumiLogger().e('PlayerController: 已切换为软解并重新打开');
+        final reopenFuture = player.open(
           Media(videoUrl(),
               start: Duration(seconds: startOffset),
               httpHeaders: _lastHttpHeaders),
           play: autoPlay,
         );
+        // 与主流程一致：软超时 + 消费异常，避免自愈阶梯自己被卡住。
+        await Future.any<bool>([
+          reopenFuture.then((_) => true).catchError((Object _) => true),
+          Future<bool>.delayed(const Duration(seconds: 30), () => false),
+        ]);
         if (!isCurrentPlayer(player)) {
           return;
         }
@@ -537,6 +734,7 @@ abstract class _PlayerPlaybackController with Store {
     _startupRecoveryDone = false;
     _softDecodeRetried = false;
     _directLoadRetried = false;
+    _decoderRecoveryStarted = false;
     _reportedPlayerErrors.clear();
     _stopStartupWatchdog();
     superResolutionMode = SuperResolutionMode.fromStorageValue(
@@ -701,26 +899,37 @@ abstract class _PlayerPlaybackController with Store {
       // 因此直链被 CDN 拒绝（`HTTP error 403`、`tls:` 握手失败、ffmpeg 的
       // `[ffmpeg/video]` 解码错误等）不会进入 error 流 —— 应用完全看不到，
       // 界面就只剩下无限转圈。这里补听日志流里的 error/fatal，保证失败可见。
+      // ★ media_kit 的 `logController` 对**所有级别**的 mpv 日志都转发
+      // （real.dart 的 MPV_EVENT_LOG_MESSAGE 分支只是无条件 `logController.add`），
+      // 只有 `player.stream.error` 才是被过滤过的（仅 file / tcp: 开头的 ffmpeg /
+      // vd / ad / cplayer / stream）。因此这里必须自己决定哪些级别值得落盘：
+      //
+      // tv-build-45 只留了 error/fatal，结果把 `Playing:`、`● Video --vid=1 ...`、
+      // `VO: [gpu] ...`、`AO: [...]`、`tcp:` 这些**真正能定位问题**的行**全部丢掉**，
+      // 现场只剩下一串 `h264_mediacodec` 报错，完全看不出「媒体到底有没有被打开」。
       player.stream.log.listen((log) {
         if (!isCurrentPlayer(player)) {
           return;
         }
-        // 自诊断通道：`_dumpMpvDiagnostics` 用 `print-text` 问到的 mpv 内部状态
-        // 走 info 级日志回来，这里无条件转成可见日志，避免像过去那样
-        // 「界面一直转圈、日志里却什么都看不到」。
-        if (log.text.contains('KAZUMI-DIAG')) {
-          KazumiLogger().i('PlayerController: MPV 诊断 ${log.text}');
-          return;
-        }
         final level = log.level;
+        final text = log.text;
+
         if (level != 'error' && level != 'fatal') {
+          // 非错误日志：只保留高价值前缀，且用 WARNING 级写出，
+          // 保证 `KazumiLogOutput`（只在 WARNING 及以上落盘）一定会写进
+          // `files/logs/kazumi_logs.log`，用户无需打开 playerDebugMode 也能查。
+          if (_worthLoggingMpvInfo(log.prefix)) {
+            KazumiLogger()
+                .w('PlayerController: MPV[$level][${log.prefix}] $text');
+          }
           return;
         }
+
         KazumiLogger().e(
-            'PlayerController: MPV 错误 [${log.prefix}] ${log.text} | url=${videoUrl()}');
+            'PlayerController: MPV 错误 [${log.prefix}] $text | url=${videoUrl()}');
         // 同一条错误可能同时出现在两个流里（例如 `vd: Could not open codec.`），
         // _handlePlayerError 内部会去重，避免弹两条提示。
-        _handlePlayerError(log.text, showRawWhenUnmapped: false);
+        _handlePlayerError(text, showRawWhenUnmapped: false);
       });
 
       if (superResolutionMode != SuperResolutionMode.off) {
@@ -737,23 +946,44 @@ abstract class _PlayerPlaybackController with Store {
         }
       }
 
-      await player.open(
+      // ★ 看门狗必须在 `open()` **之前**启动。
+      //
+      // tv-build-45 把它挂在 `open()` 之后：一旦 `open()` 在 mpv 侧卡住不返回
+      // （实机确实观察到过 `open` 之后整段代码再也不执行），看门狗、诊断、
+      // 自愈阶梯**全都不会启动** —— 这正是「卡死后毫无自救、只能无限转圈」的
+      // 直接原因。先起看门狗，再给 `open` 加一个软超时，即使它永不返回，
+      // 18 秒后照样会走恢复阶梯。
+      _startStartupWatchdog(player);
+      unawaited(_dumpMpvDiagnostics(player, 'before-open'));
+
+      final openStopwatch = Stopwatch()..start();
+      final openFuture = player.open(
         Media(videoUrl(),
             start: Duration(seconds: offset), httpHeaders: httpHeaders),
         play: autoPlay,
       );
+      // `Future.any` + `catchError` 组合：超时后不再 await `open` 的后续结果，
+      // 同时消费掉它可能抛出的异常，避免「未处理的 Future 错误」。
+      final openSettled = await Future.any<bool>([
+        openFuture.then((_) => true).catchError((Object _) => true),
+        Future<bool>.delayed(const Duration(seconds: 30), () => false),
+      ]);
+      openStopwatch.stop();
       if (!isCurrentPlayer(player)) {
         return await _discardIfNotCurrent(candidate);
       }
+      if (!openSettled) {
+        KazumiLogger().e(
+            'PlayerController: open 超过 30s 未返回，交给看门狗接管 | url=${videoUrl()}');
+        unawaited(_dumpMpvDiagnostics(player, 'open-timeout'));
+        return player;
+      }
 
       // `open` 返回只表示命令被接受，这里开始校验是否真的出画面。
-      _startStartupWatchdog(player);
-
-      // 让 mpv 自己把内部状态打出来。不 await：mpv 若没在处理命令，
-      // `mpv_command_async` 的回复永远不会到，await 会把起播流程一起拖死。
-      unawaited(_dumpMpvDiagnostics(player, 'opened'));
-      KazumiLogger().i(
-          'PlayerController: open 已返回 | 播放列表 ${player.state.playlist.medias.length} 项'
+      unawaited(_dumpMpvDiagnostics(player, 'open-returned'));
+      KazumiLogger().e(
+          'PlayerController: open 已返回（${openStopwatch.elapsedMilliseconds}ms）'
+          ' | 播放列表 ${player.state.playlist.medias.length} 项'
           ' | autoPlay=$autoPlay | 请求头 ${httpHeaders.keys.join(",")}');
 
       if (cachePolicy.networkAutomatic) {
