@@ -9,7 +9,20 @@ import 'package:kazumi/services/video_source/video_source_service.dart';
 ///
 /// 直取会先消耗一部分时间，若不回收这部分时间，慢站点的总等待时间会变成
 /// 「直取耗时 + 完整嗅探超时」，比改动前更差。
-const Duration _minSniffTimeout = Duration(seconds: 8);
+///
+/// ★ tv-build-47：8s 下限 + 15s 总预算在老设备（安卓 9 盒子 MGV3201-ZG，
+/// Chrome 66）上**必然误判超时**。实机证据：
+///
+/// ```
+/// 12:38:42.559 ERROR WebViewVideoSource: TIMEOUT 13s, no video source sniffed
+/// 12:38:42.697 DEBUG WebView: Native intercepted video URL: https://v16.xzcs3zlph.com/...
+/// ```
+///
+/// 原生拦截只比超时**晚了 138ms**。原因是被降级后的 ArtPlayer 5.0.9 全链路在
+/// 该机器上要 ~13.1s 才就绪（`artplayer.min.js` 165KB 要过 ES 降级、
+/// `jx.wuzhoupai.com.wasm` 307KB 要下载并实例化）。窗口卡在这个临界点上，
+/// 表现为「有时能解析、有时报『视频解析超时，请重试』」的随机失败。
+const Duration _minSniffTimeout = Duration(seconds: 30);
 
 /// WebView 视频源解析服务
 ///
@@ -43,7 +56,10 @@ class WebViewVideoSourceService implements IVideoSourceService {
     String episodeUrl, {
     required bool useLegacyParser,
     int offset = 0,
-    Duration timeout = const Duration(seconds: 15),
+    // ★ tv-build-47：15s 在慢设备上不够（见 [_minSniffTimeout] 的实机证据）。
+    // 45s 是「宁可多等一会儿，也不要假超时」的取舍：真失败时用户仍能在
+    // 解析超时提示里按确认键重试，而假超时会让本来能播的集数直接失败。
+    Duration timeout = const Duration(seconds: 45),
   }) async {
     final resolveTail = _resolveTail;
     if (resolveTail == null) {

@@ -511,10 +511,11 @@ abstract class _PlayerPlaybackController with Store {
       if (uri.isNotEmpty) {
         try {
           final pp = player.platform as NativePlayer;
-          try {
-            await pp.setProperty('cache-on-disk', 'no');
-            await pp.setProperty('network-timeout', '60');
-          } catch (_) {}
+          // ★ tv-build-47：这里**不再**写 `cache-on-disk=no` / `network-timeout=60`。
+          // tv-build-46 加过这两项，实测仍然 0 次开流；而 `bufferSize=1500MB`
+          // 且不做任何额外覆盖的 b9b425e 能稳定开流。失败的形态是「URL 进了播放
+          // 列表但 stream/demuxer 从未建立」（`file-format` / `cache-buffering-state`
+          // 全为 empty），说明瓶颈就在起播路径本身，再叠属性只会增加变量。
           await _commandWithTimeout(pp, ['loadfile', uri], label: 'loadfile');
           if (!isCurrentPlayer(player)) {
             return;
@@ -522,7 +523,7 @@ abstract class _PlayerPlaybackController with Store {
           await _commandWithTimeout(pp, ['set', 'pause', 'no'],
               label: 'pause-off');
           KazumiLogger().e(
-              'PlayerController: 已改用 loadfile 直接打开媒体（绕过播放列表文件 + 关闭磁盘缓存）');
+              'PlayerController: 已改用 loadfile 直接打开媒体（绕过播放列表文件）');
           // 允许这一次重开后的第二轮看门狗继续升级到「重新解析视频源」。
           _startupRecoveryDone = false;
           _startStartupWatchdog(player);
